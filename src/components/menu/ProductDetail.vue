@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
 import Select from 'primevue/select'
@@ -21,30 +20,43 @@ const canManage = computed(() => auth.can('menu.manage'))
 
 const error = ref<string | null>(null)
 
-// --- Edit dialog -----------------------------------------------------------
-const showEdit = ref(false)
-const fName = ref('')
-const fCategoryId = ref<string | null>(null)
-const fDescription = ref('')
-const fImageUrl = ref('')
-const savingEdit = ref(false)
-const editError = ref<string | null>(null)
+// --- Inline editing --------------------------------------------------------
+// The drawer is the workspace: every field is editable in place. A save bar
+// surfaces only once something actually changed.
+const fName = ref(props.product.name)
+const fCategoryId = ref<string>(props.product.category_id)
+const fDescription = ref(props.product.description ?? '')
+const fImageUrl = ref(props.product.image_url ?? '')
+const saving = ref(false)
+const saved = ref(false)
 
 const categoryOptions = computed(() => menu.categories.map((c) => ({ label: c.name, value: c.id })))
 
-function openEdit() {
+const dirty = computed(
+  () =>
+    fName.value.trim() !== props.product.name ||
+    fCategoryId.value !== props.product.category_id ||
+    fDescription.value.trim() !== (props.product.description ?? '') ||
+    fImageUrl.value.trim() !== (props.product.image_url ?? ''),
+)
+const canSave = computed(() => canManage.value && dirty.value && fName.value.trim() !== '')
+
+function resetFields() {
   fName.value = props.product.name
   fCategoryId.value = props.product.category_id
   fDescription.value = props.product.description ?? ''
   fImageUrl.value = props.product.image_url ?? ''
-  editError.value = null
-  showEdit.value = true
 }
 
-async function submitEdit() {
-  if (!fName.value.trim() || !fCategoryId.value) return
-  savingEdit.value = true
-  editError.value = null
+// A successful save clears the "saved" flash the moment the worker edits again.
+watch([fName, fCategoryId, fDescription, fImageUrl], () => {
+  if (dirty.value) saved.value = false
+})
+
+async function saveFields() {
+  if (!canSave.value) return
+  saving.value = true
+  error.value = null
   try {
     await menu.updateProduct(props.product.id, {
       name: fName.value.trim(),
@@ -52,11 +64,11 @@ async function submitEdit() {
       description: fDescription.value.trim() || null,
       image_url: fImageUrl.value.trim() || null,
     })
-    showEdit.value = false
+    saved.value = true
   } catch {
-    editError.value = 'No se pudo guardar el producto.'
+    error.value = 'No se pudo guardar el plato.'
   } finally {
-    savingEdit.value = false
+    saving.value = false
   }
 }
 
@@ -125,6 +137,10 @@ const attachedIds = ref<Set<string>>(new Set())
 const addonsLoaded = ref(false)
 const addonError = ref<string | null>(null)
 
+const attachedCount = computed(
+  () => menu.addons.filter((a) => attachedIds.value.has(a.id)).length,
+)
+
 async function loadAddons() {
   try {
     const attached = await menu.listProductAddons(props.product.id)
@@ -136,7 +152,9 @@ async function loadAddons() {
   }
 }
 
-async function toggleAddon(addon: Addon, attach: boolean) {
+async function toggleAddon(addon: Addon) {
+  if (!canManage.value) return
+  const attach = !attachedIds.value.has(addon.id)
   const next = new Set(attachedIds.value)
   if (attach) next.add(addon.id)
   else next.delete(addon.id)
@@ -162,148 +180,237 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-5">
-    <button
-      type="button"
-      class="mb-3 flex items-center gap-1 font-mono text-[11px] uppercase tracking-[0.16em] text-steel-500 lg:hidden"
-      @click="emit('back')"
-    >
-      <i class="pi pi-angle-left" /> Productos
-    </button>
+  <div class="relative flex h-full flex-col">
+    <div class="flex-1 overflow-y-auto p-5 pb-24">
+      <button
+        type="button"
+        class="mb-3 flex items-center gap-1 font-mono text-[11px] uppercase tracking-[0.16em] text-steel-500 lg:hidden"
+        @click="emit('back')"
+      >
+        <i class="pi pi-angle-left" /> Productos
+      </button>
 
-    <header class="mb-4 flex items-start justify-between gap-3">
-      <div class="min-w-0">
-        <h3 class="text-lg font-extrabold text-ink">{{ product.name }}</h3>
-        <p class="font-mono text-[11px] uppercase tracking-wide text-steel-500">
-          {{ menu.categoryName(product.category_id) ?? '—' }} · {{ product.is_active ? 'Activo' : 'Inactivo' }}
-        </p>
-        <p v-if="product.description" class="mt-1 text-sm text-steel-500">{{ product.description }}</p>
-      </div>
-    </header>
-
-    <p v-if="error" role="alert" class="mb-4 rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
-      {{ error }}
-    </p>
-
-    <div v-if="canManage" class="mb-5 flex flex-wrap gap-2">
-      <Button label="Editar" size="small" outlined icon="pi pi-pencil" @click="openEdit" />
-      <Button
-        :label="product.is_active ? 'Desactivar' : 'Activar'"
-        size="small"
-        outlined
-        severity="secondary"
-        @click="toggleActive"
-      />
-      <Button label="Eliminar" size="small" outlined severity="danger" icon="pi pi-trash" @click="remove" />
-    </div>
-
-    <!-- Per-branch price -->
-    <section class="mb-5 rounded-lg border border-line p-4">
-      <h4 class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Precio (sucursal)</h4>
-
-      <div v-if="!branch.hasActiveBranch" class="font-mono text-[11px] text-steel-500">
-        Selecciona una sucursal para fijar precios. (Configura <code>VITE_DEFAULT_BRANCH_ID</code> en el entorno.)
-      </div>
-
-      <div v-else-if="priceLoaded" class="flex items-end gap-2">
-        <div class="flex flex-1 flex-col gap-1.5">
-          <label for="price" class="text-xs text-steel-500">Precio de venta</label>
-          <InputText
-            id="price"
-            v-model="priceInput"
-            inputmode="decimal"
-            :disabled="!canManage"
-            placeholder="0.00"
-            fluid
+      <!-- Photo: live preview that updates as the URL field changes -->
+      <div class="relative mb-4 overflow-hidden rounded-xl border border-line bg-app">
+        <div class="aspect-[16/10] w-full">
+          <img
+            v-if="fImageUrl.trim()"
+            :src="fImageUrl.trim()"
+            class="size-full object-cover"
+            alt=""
           />
+          <div v-else class="grid size-full place-items-center text-center">
+            <div class="flex flex-col items-center gap-1">
+              <i class="pi pi-image text-2xl text-steel-500/60" />
+              <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-steel-500">Sin foto</span>
+            </div>
+          </div>
         </div>
-        <Button
-          v-if="canManage"
-          label="Guardar"
-          size="small"
-          :loading="savingPrice"
-          :disabled="priceInput === ''"
-          @click="savePrice"
-        />
+        <span
+          class="absolute left-2 top-2 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide"
+          :class="product.is_active ? 'bg-ember/90 text-graphite-900' : 'bg-graphite-900/85 text-paper'"
+        >
+          {{ product.is_active ? 'Activo' : 'Inactivo' }}
+        </span>
       </div>
-      <div v-else class="text-steel-500">Cargando precio…</div>
 
-      <p v-if="priceSaved" class="mt-2 font-mono text-[11px] text-ember">Precio guardado.</p>
-      <p v-if="priceError" role="alert" class="mt-2 font-mono text-[11px] text-alert">{{ priceError }}</p>
-    </section>
+      <div v-if="canManage" class="mb-5 flex flex-col gap-1.5">
+        <label for="d-img" class="font-mono text-[10px] uppercase tracking-[0.16em] text-steel-500">URL de la foto</label>
+        <InputText id="d-img" v-model="fImageUrl" placeholder="https://…" fluid />
+      </div>
 
-    <!-- Addons -->
-    <section class="rounded-lg border border-line p-4">
-      <h4 class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Adiciones disponibles</h4>
-
-      <p v-if="addonError" role="alert" class="mb-2 font-mono text-[11px] text-alert">{{ addonError }}</p>
-      <p v-if="menu.addons.length === 0" class="font-mono text-[11px] text-steel-500">
-        No hay adiciones en el catálogo. Créalas en la pestaña Adiciones.
+      <p v-if="error" role="alert" class="mb-4 rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
+        {{ error }}
       </p>
 
-      <div v-else-if="addonsLoaded" class="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
-        <label
-          v-for="addon in menu.addons"
-          :key="addon.id"
-          class="flex items-start gap-2.5 text-sm"
-          :class="canManage ? 'cursor-pointer' : 'cursor-default opacity-80'"
-        >
-          <input
-            type="checkbox"
-            class="mt-0.5 size-4 accent-ember"
-            :checked="attachedIds.has(addon.id)"
-            :disabled="!canManage"
-            @change="toggleAddon(addon, ($event.target as HTMLInputElement).checked)"
-          />
-          <span>
-            <span class="text-ink">{{ addon.name }}</span>
-            <span class="block font-mono text-[11px] text-steel-500">{{ addon.price }}</span>
-          </span>
-        </label>
-      </div>
-      <div v-else class="text-steel-500">Cargando adiciones…</div>
-    </section>
-
-    <!-- Edit dialog -->
-    <Dialog
-      v-model:visible="showEdit"
-      modal
-      header="Editar producto"
-      :style="{ width: '28rem' }"
-      :breakpoints="{ '480px': '92vw' }"
-    >
-      <div class="flex flex-col gap-4 pt-2">
+      <!-- Identity: name + category, editable in place -->
+      <div class="mb-5 flex flex-col gap-4">
         <div class="flex flex-col gap-1.5">
-          <label for="e-name" class="text-xs font-medium uppercase tracking-wide text-steel-500">Nombre</label>
-          <InputText id="e-name" v-model="fName" fluid autofocus />
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <label for="e-cat" class="text-xs font-medium uppercase tracking-wide text-steel-500">Categoría</label>
-          <Select
-            id="e-cat"
-            v-model="fCategoryId"
-            :options="categoryOptions"
-            option-label="label"
-            option-value="value"
+          <label for="d-name" class="font-mono text-[10px] uppercase tracking-[0.16em] text-steel-500">Nombre del plato</label>
+          <InputText
+            id="d-name"
+            v-model="fName"
+            :readonly="!canManage"
+            class="!font-display !text-lg !font-extrabold"
             fluid
           />
         </div>
-        <div class="flex flex-col gap-1.5">
-          <label for="e-desc" class="text-xs font-medium uppercase tracking-wide text-steel-500">Descripción</label>
-          <Textarea id="e-desc" v-model="fDescription" rows="2" auto-resize fluid />
+
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div class="flex flex-col gap-1.5">
+            <label for="d-cat" class="font-mono text-[10px] uppercase tracking-[0.16em] text-steel-500">Categoría</label>
+            <Select
+              id="d-cat"
+              v-model="fCategoryId"
+              :options="categoryOptions"
+              option-label="label"
+              option-value="value"
+              :disabled="!canManage"
+              fluid
+            />
+          </div>
+          <div v-if="canManage" class="flex flex-col gap-1.5">
+            <span class="font-mono text-[10px] uppercase tracking-[0.16em] text-steel-500">Estado</span>
+            <button
+              type="button"
+              class="flex h-[2.6rem] items-center justify-between rounded-md border border-line px-3 text-sm transition hover:border-ember/50"
+              @click="toggleActive"
+            >
+              <span class="text-ink">{{ product.is_active ? 'Activo' : 'Inactivo' }}</span>
+              <span
+                class="relative inline-flex h-5 w-9 items-center rounded-full transition"
+                :class="product.is_active ? 'bg-ember' : 'bg-line'"
+              >
+                <span
+                  class="absolute size-4 rounded-full bg-paper shadow transition-all"
+                  :class="product.is_active ? 'left-[1.15rem]' : 'left-0.5'"
+                />
+              </span>
+            </button>
+          </div>
         </div>
+
         <div class="flex flex-col gap-1.5">
-          <label for="e-img" class="text-xs font-medium uppercase tracking-wide text-steel-500">URL de imagen</label>
-          <InputText id="e-img" v-model="fImageUrl" fluid />
+          <label for="d-desc" class="font-mono text-[10px] uppercase tracking-[0.16em] text-steel-500">Descripción</label>
+          <Textarea
+            id="d-desc"
+            v-model="fDescription"
+            :readonly="!canManage"
+            rows="2"
+            auto-resize
+            placeholder="Ingredientes, notas para la cocina…"
+            fluid
+          />
         </div>
-        <p v-if="editError" role="alert" class="rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
-          {{ editError }}
-        </p>
       </div>
-      <template #footer>
-        <Button label="Cancelar" severity="secondary" text @click="showEdit = false" />
-        <Button label="Guardar" :loading="savingEdit" :disabled="!fName.trim() || !fCategoryId" @click="submitEdit" />
-      </template>
-    </Dialog>
+
+      <!-- Per-branch price -->
+      <section class="mb-5 rounded-xl border border-line p-4">
+        <h4 class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Precio (sucursal)</h4>
+
+        <div v-if="!branch.hasActiveBranch" class="font-mono text-[11px] text-steel-500">
+          Selecciona una sucursal para fijar precios. (Configura <code>VITE_DEFAULT_BRANCH_ID</code> en el entorno.)
+        </div>
+
+        <div v-else-if="priceLoaded" class="flex items-end gap-2">
+          <div class="flex flex-1 flex-col gap-1.5">
+            <label for="price" class="text-xs text-steel-500">Precio de venta</label>
+            <InputText
+              id="price"
+              v-model="priceInput"
+              inputmode="decimal"
+              :disabled="!canManage"
+              placeholder="0.00"
+              fluid
+            />
+          </div>
+          <Button
+            v-if="canManage"
+            label="Guardar"
+            size="small"
+            :loading="savingPrice"
+            :disabled="priceInput === ''"
+            @click="savePrice"
+          />
+        </div>
+        <div v-else class="text-steel-500">Cargando precio…</div>
+
+        <p v-if="priceSaved" class="mt-2 font-mono text-[11px] text-ember">Precio guardado.</p>
+        <p v-if="priceError" role="alert" class="mt-2 font-mono text-[11px] text-alert">{{ priceError }}</p>
+      </section>
+
+      <!-- Addons: interactive toggle chips -->
+      <section class="rounded-xl border border-line p-4">
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h4 class="font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Adiciones</h4>
+          <span v-if="addonsLoaded && menu.addons.length" class="font-mono text-[11px] text-steel-500">
+            {{ attachedCount }} de {{ menu.addons.length }}
+          </span>
+        </div>
+
+        <p v-if="addonError" role="alert" class="mb-2 font-mono text-[11px] text-alert">{{ addonError }}</p>
+        <p v-if="menu.addons.length === 0" class="font-mono text-[11px] text-steel-500">
+          No hay adiciones en el catálogo. Créalas en la pestaña Adiciones.
+        </p>
+
+        <div v-else-if="addonsLoaded" class="flex flex-wrap gap-2">
+          <button
+            v-for="addon in menu.addons"
+            :key="addon.id"
+            type="button"
+            :disabled="!canManage"
+            class="group flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30 disabled:cursor-default"
+            :class="attachedIds.has(addon.id)
+              ? 'border-ember bg-ember/10 text-ink'
+              : 'border-line text-steel-500 hover:border-ember/40 hover:text-ink'"
+            :aria-pressed="attachedIds.has(addon.id)"
+            @click="toggleAddon(addon)"
+          >
+            <i
+              class="text-[11px]"
+              :class="attachedIds.has(addon.id) ? 'pi pi-check text-ember' : 'pi pi-plus text-steel-500'"
+            />
+            <span>{{ addon.name }}</span>
+            <span class="font-mono text-[11px] text-steel-500">{{ addon.price }}</span>
+          </button>
+        </div>
+        <div v-else class="text-steel-500">Cargando adiciones…</div>
+      </section>
+
+      <!-- Danger zone -->
+      <div v-if="canManage" class="mt-5 flex justify-end">
+        <Button label="Eliminar plato" size="small" outlined severity="danger" icon="pi pi-trash" @click="remove" />
+      </div>
+    </div>
+
+    <!-- Sticky save bar: appears only when there are unsaved field changes -->
+    <Transition name="savebar">
+      <div
+        v-if="canManage && (dirty || saved)"
+        class="absolute inset-x-0 bottom-0 flex items-center justify-between gap-3 border-t border-line bg-paper/95 px-5 py-3 backdrop-blur"
+      >
+        <span v-if="saved && !dirty" class="flex items-center gap-1.5 font-mono text-[11px] text-ember">
+          <i class="pi pi-check-circle" /> Cambios guardados
+        </span>
+        <span v-else class="font-mono text-[11px] uppercase tracking-[0.16em] text-steel-500">
+          Cambios sin guardar
+        </span>
+        <div class="flex items-center gap-2">
+          <Button v-if="dirty" label="Descartar" size="small" text severity="secondary" @click="resetFields" />
+          <Button
+            v-if="dirty"
+            label="Guardar"
+            size="small"
+            icon="pi pi-check"
+            :loading="saving"
+            :disabled="!canSave"
+            @click="saveFields"
+          />
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+.savebar-enter-from,
+.savebar-leave-to {
+  opacity: 0;
+  transform: translateY(100%);
+}
+.savebar-enter-active,
+.savebar-leave-active {
+  transition: opacity 0.2s ease, transform 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .savebar-enter-from,
+  .savebar-leave-to {
+    opacity: 1;
+    transform: none;
+  }
+  .savebar-enter-active,
+  .savebar-leave-active {
+    transition: none;
+  }
+}
+</style>
