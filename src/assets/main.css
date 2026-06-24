@@ -1,0 +1,96 @@
+@import 'tailwindcss';
+@import 'tailwindcss-primeui';
+
+/* PrimeVue emits its styles into the `primevue` CSS layer (configured in main.ts), so
+   Tailwind's `utilities` layer wins for one-off overrides. */
+
+/* Design tokens — concept "El Pase": stainless steel under the heat lamp. */
+@theme {
+  --color-graphite-900: #14181c;
+  --color-graphite-800: #1f242a;
+  --color-steel-500: #6b7682;
+  --color-app: #f1f3f5;
+  --color-paper: #fbfbf9;
+  --color-ink: #1b1f24;
+  --color-line: #dde1e4;
+  --color-ember: #f2933b;
+  --color-ember-600: #d97a22;
+  --color-alert: #c8472f;
+
+  --font-display: 'Bricolage Grotesque', ui-sans-serif, sans-serif;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-app);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+  }
+}
+
+/* The pass: cool graphite field, faint brushed-steel grain, heat-lamp glow from the top. */
+.bg-pass {
+  background-color: var(--color-graphite-900);
+  background-image:
+    radial-gradient(
+      75% 52% at 50% 2%,
+      color-mix(in oklab, var(--color-ember) 28%, transparent),
+      transparent 56%
+    ),
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.018) 0 1px, transparent 1px 7px);
+}
+
+/* The docket's perforated top edge. */
+.docket-perf {
+  background-image: radial-gradient(circle, var(--color-line) 1.5px, transparent 1.7px);
+  background-size: 13px 7px;
+  background-repeat: repeat-x;
+  background-position: center top;
+}
+
+/* One orchestrated moment: the docket settles onto the rail on load. */
+@keyframes docket-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-docket {
+  animation: docket-in 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-docket {
+    animation: none;
+  }
+}
+
+/* Master-detail push: the detail pane slides in when drilling down on mobile. */
+.detail-enter-from {
+  opacity: 0;
+  transform: translateX(12px);
+}
+.detail-enter-active {
+  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detail-enter-from {
+    opacity: 1;
+    transform: none;
+  }
+  .detail-enter-active {
+    transition: none;
+  }
+}
