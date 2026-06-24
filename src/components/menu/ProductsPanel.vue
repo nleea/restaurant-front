@@ -26,6 +26,21 @@ const q = ref('')
 const activeCategoryId = ref<string | null>(null)
 const showInactive = ref(false)
 
+// View mode: the docket-style list, or an image-forward grid. The worker picks per taste.
+type ViewMode = 'list' | 'grid'
+const STORAGE_KEY = 'carta:view'
+const viewMode = ref<ViewMode>(
+  (typeof localStorage !== 'undefined' && (localStorage.getItem(STORAGE_KEY) as ViewMode)) || 'list',
+)
+function setView(mode: ViewMode) {
+  viewMode.value = mode
+  try {
+    localStorage.setItem(STORAGE_KEY, mode)
+  } catch {
+    // ignore persistence failures (private mode, etc.)
+  }
+}
+
 // Edit drawer.
 const selectedId = ref<string | null>(null)
 const drawerOpen = ref(false)
@@ -81,6 +96,8 @@ const visibleCategories = computed<Category[]>(() => {
 const totalVisible = computed(() =>
   visibleCategories.value.reduce((n, c) => n + productsInCategory(c.id).length, 0),
 )
+
+const activeCount = computed(() => menu.products.filter((p) => p.is_active).length)
 
 function priceInfo(product: Product): { text: string; muted: boolean } {
   if (!branch.hasActiveBranch) return { text: '—', muted: true }
@@ -139,6 +156,37 @@ async function submitCreate() {
         <i class="pi pi-search absolute left-3 top-1/2 -translate-y-1/2 text-sm text-steel-500" />
         <InputText v-model="q" placeholder="Buscar plato…" class="w-full !pl-9" />
       </div>
+
+      <!-- View toggle: docket list vs. image grid -->
+      <div
+        class="inline-flex shrink-0 items-center rounded-lg border border-line bg-paper p-1"
+        role="group"
+        aria-label="Modo de vista"
+      >
+        <button
+          type="button"
+          class="grid size-7 place-items-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
+          :class="viewMode === 'list' ? 'bg-graphite-900 text-paper' : 'text-steel-500 hover:text-ink'"
+          :aria-pressed="viewMode === 'list'"
+          title="Vista lista"
+          @click="setView('list')"
+        >
+          <i class="pi pi-list text-xs" />
+          <span class="sr-only">Vista lista</span>
+        </button>
+        <button
+          type="button"
+          class="grid size-7 place-items-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
+          :class="viewMode === 'grid' ? 'bg-graphite-900 text-paper' : 'text-steel-500 hover:text-ink'"
+          :aria-pressed="viewMode === 'grid'"
+          title="Vista cuadrícula"
+          @click="setView('grid')"
+        >
+          <i class="pi pi-th-large text-xs" />
+          <span class="sr-only">Vista cuadrícula</span>
+        </button>
+      </div>
+
       <label class="flex shrink-0 items-center gap-2 text-xs text-steel-500">
         <input type="checkbox" v-model="showInactive" class="size-3.5 accent-ember" />
         Mostrar inactivos
@@ -202,7 +250,7 @@ async function submitCreate() {
       Ningún plato coincide con la búsqueda.
     </p>
 
-    <!-- The carta: category sections of dotted-leader line items -->
+    <!-- The carta: category sections -->
     <section v-for="cat in visibleCategories" v-else :key="cat.id" class="flex flex-col gap-2.5">
       <header class="flex items-center gap-3">
         <span class="size-1.5 rounded-[2px] bg-ember" aria-hidden="true" />
@@ -224,11 +272,12 @@ async function submitCreate() {
         </button>
       </p>
 
-      <ul v-else class="flex flex-col gap-2">
+      <!-- LIST view: dotted-leader docket line items -->
+      <ul v-else-if="viewMode === 'list'" class="flex flex-col gap-2">
         <li v-for="prod in productsInCategory(cat.id)" :key="prod.id">
           <button
             type="button"
-            class="group flex w-full items-center gap-3.5 rounded-xl border border-line bg-paper px-3.5 py-3 text-left transition hover:border-ember/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
+            class="group flex w-full items-center gap-3.5 rounded-xl border border-line bg-paper px-3.5 py-3 text-left transition hover:border-ember/50 hover:shadow-[0_1px_0_0_var(--color-ember)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
             :class="prod.is_active ? '' : 'opacity-60'"
             @click="openProduct(prod)"
           >
@@ -258,6 +307,56 @@ async function submitCreate() {
                   class="shrink-0 rounded-full bg-app px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-steel-500"
                 >
                   Inactivo
+                </span>
+              </span>
+            </span>
+          </button>
+        </li>
+      </ul>
+
+      <!-- GRID view: image-forward plate cards -->
+      <ul v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <li v-for="prod in productsInCategory(cat.id)" :key="prod.id">
+          <button
+            type="button"
+            class="group flex h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-paper text-left transition hover:-translate-y-0.5 hover:border-ember/50 hover:shadow-[0_6px_18px_-10px_rgba(20,24,28,0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
+            :class="prod.is_active ? '' : 'opacity-70'"
+            @click="openProduct(prod)"
+          >
+            <span class="relative block aspect-[5/4] w-full overflow-hidden bg-app">
+              <img
+                v-if="prod.image_url"
+                :src="prod.image_url"
+                class="size-full object-cover transition duration-300 group-hover:scale-[1.04]"
+                alt=""
+              />
+              <span
+                v-else
+                class="grid size-full place-items-center font-display text-3xl font-extrabold text-ember/70"
+              >
+                {{ prod.name.charAt(0).toUpperCase() }}
+              </span>
+              <span
+                v-if="!prod.is_active"
+                class="absolute left-2 top-2 rounded-full bg-graphite-900/85 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-paper"
+              >
+                Inactivo
+              </span>
+            </span>
+            <span class="flex flex-1 flex-col gap-1 p-3">
+              <span class="truncate font-display text-[15px] font-bold leading-tight text-ink">{{ prod.name }}</span>
+              <span
+                v-if="prod.description"
+                class="line-clamp-2 text-[12px] leading-snug text-steel-500"
+              >
+                {{ prod.description }}
+              </span>
+              <span class="mt-auto pt-1">
+                <span
+                  class="font-mono text-sm tabular-nums"
+                  :class="priceInfo(prod).muted ? 'text-steel-500' : 'font-medium text-ink group-hover:text-ember'"
+                >
+                  {{ priceInfo(prod).text }}
                 </span>
               </span>
             </span>
