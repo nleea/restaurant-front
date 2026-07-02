@@ -1,6 +1,14 @@
 import { defineStore } from 'pinia'
 import * as api from '@/services/menu.api'
-import type { Addon, Category, CategoryInput, Product, ProductInput } from '@/services/menu.api'
+import type {
+  Addon,
+  Category,
+  CategoryInput,
+  Product,
+  ProductInput,
+  ProductVariant,
+  VariantInput,
+} from '@/services/menu.api'
 
 interface MenuState {
   categories: Category[]
@@ -10,6 +18,8 @@ interface MenuState {
   // The backend has no bulk price endpoint, so this is filled by loadPrices() in parallel.
   priceByProductId: Record<string, string | null>
   pricesLoaded: boolean
+  // Sellable variants per product id, fetched on demand when a product is opened.
+  variantsByProductId: Record<string, ProductVariant[]>
 }
 
 // Mirrors the RBAC store discipline: each mutation writes through the API then refetches the
@@ -22,6 +32,7 @@ export const useMenuStore = defineStore('menu', {
     addons: [],
     priceByProductId: {},
     pricesLoaded: false,
+    variantsByProductId: {},
   }),
 
   getters: {
@@ -111,6 +122,24 @@ export const useMenuStore = defineStore('menu', {
       } catch {
         // leave the cached value as-is on failure
       }
+    },
+
+    // --- Sellable variants (write-through refetch per product) ---------------
+    async loadVariants(productId: string): Promise<void> {
+      this.variantsByProductId[productId] = await api.listVariants(productId)
+    },
+    async addVariant(productId: string, input: VariantInput): Promise<ProductVariant> {
+      const variant = await api.createVariant(productId, input)
+      await this.loadVariants(productId)
+      return variant
+    },
+    async renameVariant(productId: string, variantId: string, name: string): Promise<void> {
+      await api.updateVariant(variantId, { name })
+      await this.loadVariants(productId)
+    },
+    async removeVariant(productId: string, variantId: string): Promise<void> {
+      await api.deleteVariant(variantId)
+      await this.loadVariants(productId)
     },
 
     async createAddon(name: string, price: string, isActive = true): Promise<Addon> {

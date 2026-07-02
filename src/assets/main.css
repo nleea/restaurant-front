@@ -4,8 +4,15 @@
 /* PrimeVue emits its styles into the `primevue` CSS layer (configured in main.ts), so
    Tailwind's `utilities` layer wins for one-off overrides. */
 
-/* Design tokens — concept "El Pase": stainless steel under the heat lamp. */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Design tokens — concept "El Pase": stainless steel under the heat lamp.
+   Refreshed palette (2026): the original graphite/steel/ember identity is kept
+   verbatim (these tokens are load-bearing across every panel), extended with a
+   surface scale, semantic states, and warm-neutral text steps. Add tokens here;
+   never rename the existing ones — panels reference them directly.
+   ──────────────────────────────────────────────────────────────────────────── */
 @theme {
+  /* Base identity — unchanged. */
   --color-graphite-900: #14181c;
   --color-graphite-800: #1f242a;
   --color-steel-500: #6b7682;
@@ -17,21 +24,170 @@
   --color-ember-600: #d97a22;
   --color-alert: #c8472f;
 
+  /* Neutral scale — steel steps + a softer secondary ink for two-level text
+     hierarchy (ink → muted → steel) without reaching for opacity. */
+  --color-graphite-700: #2b3138;
+  --color-steel-600: #566069;
+  --color-steel-400: #97a0aa;
+  --color-steel-300: #c2c8cd;
+  --color-muted: #5b6672;
+
+  /* Surfaces — depth for the light working plane. `app` is the field, `paper`
+     the docket/card, `raised` a crisper elevated surface, `sunken` a recessed
+     well (table headers, inset panels). */
+  --color-surface: #ffffff;
+  --color-raised: #ffffff;
+  --color-sunken: #eceef1;
+  --color-hairline: #e7eaed;
+
+  /* Ember tints for soft accent fills (badges, active chips, focus wells). */
+  --color-ember-50: #fef6ec;
+  --color-ember-100: #fce8cf;
+
+  /* Semantic states — the kitchen's signal colors. Alert (red) already exists;
+     success reads as "plated/paid", warn as "running low / due soon", info as
+     neutral system messaging. Each ships a -600 for hover/press. */
+  --color-success: #2f9e5b;
+  --color-success-600: #248049;
+  --color-warn: #d98a15;
+  --color-warn-600: #b87111;
+  --color-info: #3b7fd9;
+  --color-info-600: #2f66b0;
+  --color-alert-600: #a63722;
+
   --font-display: 'Bricolage Grotesque', ui-sans-serif, sans-serif;
   --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Fluid display size for hero headings — adapts from phone to desktop. */
+  --text-hero: clamp(1.5rem, 1.15rem + 1.6vw, 2.125rem);
 }
 
 @layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     background-color: var(--color-app);
     color: var(--color-ink);
     font-family: var(--font-sans);
+    /* Crisper type rendering on the light plane. */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
+
   h1,
   h2,
   h3 {
     font-family: var(--font-display);
+    letter-spacing: -0.012em;
+  }
+
+  /* Figures line up in columns: tabular numerals everywhere money and codes live. */
+  .font-mono,
+  input,
+  table {
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+  }
+
+  /* One consistent focus ring across the app — the heat-lamp ember. */
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-ember) 55%, transparent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-ember) 26%, transparent);
+    color: var(--color-ink);
+  }
+
+  /* Quiet, brushed-steel scrollbars so dense tables don't feel like spreadsheets. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-steel-300) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-steel-300);
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-steel-400);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Opt-in component utilities. Existing panels keep working untouched; new or
+   refreshed markup can adopt these for consistency. All expressed in tokens.
+   ──────────────────────────────────────────────────────────────────────────── */
+@layer components {
+  /* The docket/card: the standard elevated working surface. */
+  .card {
+    background-color: var(--color-paper);
+    border: 1px solid var(--color-line);
+    border-radius: 0.875rem;
+    box-shadow: 0 1px 2px -1px rgb(20 24 28 / 0.06), 0 8px 24px -18px rgb(20 24 28 / 0.28);
+  }
+
+  /* Station eyebrow: the small mono kicker every screen header uses. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--color-steel-500);
+  }
+
+  /* Status pills — semantic chips in the signal palette. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    border: 1px solid transparent;
+  }
+  .pill-success {
+    color: var(--color-success-600);
+    background-color: color-mix(in oklab, var(--color-success) 12%, white);
+    border-color: color-mix(in oklab, var(--color-success) 28%, transparent);
+  }
+  .pill-warn {
+    color: var(--color-warn-600);
+    background-color: color-mix(in oklab, var(--color-warn) 14%, white);
+    border-color: color-mix(in oklab, var(--color-warn) 30%, transparent);
+  }
+  .pill-alert {
+    color: var(--color-alert-600);
+    background-color: color-mix(in oklab, var(--color-alert) 10%, white);
+    border-color: color-mix(in oklab, var(--color-alert) 28%, transparent);
+  }
+  .pill-info {
+    color: var(--color-info-600);
+    background-color: color-mix(in oklab, var(--color-info) 12%, white);
+    border-color: color-mix(in oklab, var(--color-info) 28%, transparent);
+  }
+  .pill-neutral {
+    color: var(--color-steel-600);
+    background-color: var(--color-sunken);
+    border-color: var(--color-line);
   }
 }
 
@@ -73,6 +229,59 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-docket {
     animation: none;
+  }
+}
+
+/* The heat lamp, made functional: an overdue docket sits right under the lamp and breathes.
+   Encodes time pressure — the longer food waits, the hotter the chit glows. */
+@keyframes lamp-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-alert) 55%, transparent),
+      0 12px 34px -16px color-mix(in oklab, var(--color-alert) 55%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-alert) 80%, transparent),
+      0 18px 46px -14px color-mix(in oklab, var(--color-alert) 75%, transparent);
+  }
+}
+.heat-hot {
+  animation: lamp-breathe 2.6s ease-in-out infinite;
+}
+.heat-warm {
+  box-shadow: 0 12px 34px -18px color-mix(in oklab, var(--color-ember) 70%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heat-hot {
+    animation: none;
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-alert) 65%, transparent);
+  }
+}
+
+/* A dine-in order just came up: the card breathes a soft success halo so the waiter catches it.
+   Data-driven, but decorative — honor reduced-motion by holding a static ring. */
+@keyframes ready-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-success) 45%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-success) 70%, transparent),
+      0 12px 30px -18px color-mix(in oklab, var(--color-success) 60%, transparent);
+  }
+}
+.pulse-ready {
+  animation: ready-breathe 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-ready {
+    animation: none;
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-success) 55%, transparent);
   }
 }
 

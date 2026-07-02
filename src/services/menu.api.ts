@@ -139,3 +139,41 @@ export async function attachAddon(productId: string, addonId: string): Promise<v
 export async function detachAddon(productId: string, addonId: string): Promise<void> {
   await http.delete(`/menu/products/${productId}/addons/${addonId}`)
 }
+
+// --- Product variants (sellable SKUs) ------------------------------------------------------
+// `extra_price` is derived server-side (sum of the variant's composed options; "0.00" when
+// plain). A variant's orderable price = the product's active-branch price + extra_price.
+export interface ProductVariant {
+  id: string
+  product_id: string
+  name: string | null
+  is_active: boolean
+  extra_price: string
+}
+
+export interface VariantInput {
+  name?: string | null
+  variant_option_ids?: string[]
+}
+
+export async function listVariants(productId: string): Promise<ProductVariant[]> {
+  return (await http.get<ProductVariant[]>(`/menu/products/${productId}/variants`)).data
+}
+
+export async function createVariant(
+  productId: string,
+  input: VariantInput,
+): Promise<ProductVariant> {
+  return (await http.post<ProductVariant>(`/menu/products/${productId}/variants`, input)).data
+}
+
+export async function updateVariant(
+  variantId: string,
+  patch: Partial<Pick<ProductVariant, 'name' | 'is_active'>>,
+): Promise<ProductVariant> {
+  return (await http.patch<ProductVariant>(`/menu/variants/${variantId}`, patch)).data
+}
+
+export async function deleteVariant(variantId: string): Promise<void> {
+  await http.delete(`/menu/variants/${variantId}`)
+}

@@ -58,9 +58,9 @@ const creating = ref(false)
 const createError = ref<string | null>(null)
 
 onMounted(async () => {
-  branch.ensureLoaded()
   loading.value = true
   try {
+    await branch.ensureLoaded()
     await Promise.all([menu.fetchCategories(), menu.fetchProducts(), menu.fetchAddons()])
     if (branch.activeBranchId) await menu.loadPrices(branch.activeBranchId)
   } catch {
@@ -96,8 +96,6 @@ const visibleCategories = computed<Category[]>(() => {
 const totalVisible = computed(() =>
   visibleCategories.value.reduce((n, c) => n + productsInCategory(c.id).length, 0),
 )
-
-const activeCount = computed(() => menu.products.filter((p) => p.is_active).length)
 
 function priceInfo(product: Product): { text: string; muted: boolean } {
   if (!branch.hasActiveBranch) return { text: '—', muted: true }
@@ -224,7 +222,7 @@ async function submitCreate() {
     </div>
 
     <p v-if="!branch.hasActiveBranch" class="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] text-steel-500">
-      Precios ocultos — configura una sucursal (<code>VITE_DEFAULT_BRANCH_ID</code>) para fijarlos.
+      Precios ocultos — esta cuenta aún no tiene sucursales para fijarlos.
     </p>
     <p v-if="error" role="alert" class="rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
       {{ error }}

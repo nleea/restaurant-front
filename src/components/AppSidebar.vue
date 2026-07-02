@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import BranchSelector from '@/components/BranchSelector.vue'
 
 // "El riel del pase": the authenticated nav echoes the login's dark pass (bg-pass) while the
 // content stays the light working surface. lg+ shows it as a fixed left rail; below lg it slides
@@ -20,13 +21,59 @@ interface NavLink {
   permission: string
 }
 
-const allLinks: NavLink[] = [
-  { to: '/menu', label: 'Carta', icon: 'pi-book', permission: 'menu.read' },
-  { to: '/catalog', label: 'Catálogo', icon: 'pi-database', permission: 'catalog.read' },
-  { to: '/rbac', label: 'Accesos', icon: 'pi-shield', permission: 'rbac.manage' },
+interface NavGroup {
+  /** Section kicker; grouping gives 15 flat stations a scannable hierarchy. */
+  title: string
+  links: NavLink[]
+}
+
+const navGroups: NavGroup[] = [
+  {
+    title: 'Servicio',
+    links: [
+      { to: '/floor', label: 'Salón', icon: 'pi-th-large', permission: 'orders.read' },
+      { to: '/kitchen', label: 'Cocina', icon: 'pi-clock', permission: 'kitchen.read' },
+      { to: '/cash', label: 'Caja', icon: 'pi-wallet', permission: 'cash.read' },
+      { to: '/delivery', label: 'Domicilios', icon: 'pi-send', permission: 'delivery.read' },
+      { to: '/dispatch', label: 'Despacho', icon: 'pi-map-marker', permission: 'delivery.read' },
+    ],
+  },
+  {
+    title: 'Abastecimiento',
+    links: [
+      { to: '/inventory', label: 'Inventario', icon: 'pi-box', permission: 'inventory.read' },
+      { to: '/purchasing', label: 'Compras', icon: 'pi-truck', permission: 'purchasing.read' },
+      { to: '/procurement', label: 'Pedidos', icon: 'pi-shopping-cart', permission: 'purchasing.read' },
+    ],
+  },
+  {
+    title: 'Carta',
+    links: [
+      { to: '/menu', label: 'Carta', icon: 'pi-book', permission: 'menu.read' },
+      { to: '/catalog', label: 'Catálogo', icon: 'pi-database', permission: 'catalog.read' },
+    ],
+  },
+  {
+    title: 'Gestión',
+    links: [
+      { to: '/finance', label: 'Finanzas', icon: 'pi-chart-line', permission: 'finance.read' },
+      { to: '/customers', label: 'Clientes', icon: 'pi-id-card', permission: 'customers.read' },
+      { to: '/staff', label: 'Personal', icon: 'pi-users', permission: 'staff.read' },
+      { to: '/audit', label: 'Auditoría', icon: 'pi-history', permission: 'audit.read' },
+      { to: '/rbac', label: 'Accesos', icon: 'pi-shield', permission: 'rbac.manage' },
+    ],
+  },
 ]
 
-const links = computed(() => allLinks.filter((l) => auth.can(l.permission)))
+// Filter each group by permission, then drop groups that ended up empty.
+const groups = computed(() =>
+  navGroups
+    .map((g) => ({ title: g.title, links: g.links.filter((l) => auth.can(l.permission)) }))
+    .filter((g) => g.links.length > 0),
+)
+
+// First reachable link — the brand's home target and the login redirect fallback.
+const firstLink = computed(() => groups.value[0]?.links[0]?.to ?? '/')
 
 function isActive(to: string): boolean {
   return route.path === to
@@ -60,7 +107,7 @@ function onLogout() {
   >
     <!-- Brand: the heat lamp over the pass -->
     <div class="flex items-center justify-between gap-2 px-2">
-      <RouterLink :to="links[0]?.to ?? '/'" class="flex items-center gap-2.5" @click="emit('close')">
+      <RouterLink :to="firstLink" class="flex items-center gap-2.5" @click="emit('close')">
         <span class="grid size-7 place-items-center rounded-md bg-ember/15 text-ember shadow-[0_0_14px_rgba(242,147,59,0.45)]">
           <i class="pi pi-sun text-[15px]" />
         </span>
@@ -76,34 +123,49 @@ function onLogout() {
       </button>
     </div>
 
-    <!-- Nav -->
-    <nav class="mt-7 flex flex-1 flex-col gap-1">
-      <RouterLink
-        v-for="link in links"
-        :key="link.to"
-        :to="link.to"
-        :aria-current="isActive(link.to) ? 'page' : undefined"
-        class="group relative flex items-center gap-3 rounded-lg px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40"
-        :class="
-          isActive(link.to)
-            ? 'bg-white/[0.06] text-paper'
-            : 'text-paper/55 hover:bg-white/[0.04] hover:text-paper'
-        "
-        @click="emit('close')"
-      >
-        <!-- Signature: the heat-lamp ember bar marks the active station. -->
-        <span
-          v-if="isActive(link.to)"
-          class="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-ember shadow-[0_0_12px_rgba(242,147,59,0.75)]"
-          aria-hidden="true"
-        />
-        <i :class="['pi', link.icon, 'text-base']" />
-        <span class="font-mono text-[12px] uppercase tracking-[0.14em]">{{ link.label }}</span>
-      </RouterLink>
+    <!-- Nav: stations grouped into sections so 15 links stay scannable. Scrolls
+         independently of the pinned brand/footer on short viewports. -->
+    <nav class="mt-6 flex flex-1 flex-col gap-5 overflow-y-auto pr-0.5">
+      <div v-for="group in groups" :key="group.title" class="flex flex-col gap-0.5">
+        <p class="mb-1 px-3 font-mono text-[10px] uppercase tracking-[0.2em] text-paper/35">
+          {{ group.title }}
+        </p>
+        <RouterLink
+          v-for="link in group.links"
+          :key="link.to"
+          :to="link.to"
+          :aria-current="isActive(link.to) ? 'page' : undefined"
+          class="group relative flex items-center gap-3 rounded-lg px-3 py-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40"
+          :class="
+            isActive(link.to)
+              ? 'bg-white/[0.07] text-paper'
+              : 'text-paper/55 hover:bg-white/[0.04] hover:text-paper'
+          "
+          @click="emit('close')"
+        >
+          <!-- Signature: the heat-lamp ember bar marks the active station. -->
+          <span
+            v-if="isActive(link.to)"
+            class="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-ember shadow-[0_0_12px_rgba(242,147,59,0.75)]"
+            aria-hidden="true"
+          />
+          <i
+            :class="['pi', link.icon, 'text-base transition-colors']"
+            class="text-paper/45 group-hover:text-paper/80"
+            :style="isActive(link.to) ? 'color: var(--color-ember)' : undefined"
+          />
+          <span class="font-mono text-[12px] uppercase tracking-[0.14em]">{{ link.label }}</span>
+        </RouterLink>
+      </div>
     </nav>
 
+    <!-- Active branch: the working surface every operational screen scopes to. -->
+    <div class="border-t border-white/5 px-1 pt-4">
+      <BranchSelector variant="dark" />
+    </div>
+
     <!-- Identity + exit -->
-    <div class="flex flex-col gap-1 border-t border-white/5 pt-4">
+    <div class="mt-3 flex flex-col gap-1 border-t border-white/5 pt-4">
       <p class="truncate px-3 font-mono text-[10px] uppercase tracking-[0.16em] text-paper/40">
         {{ auth.user?.email }}
       </p>

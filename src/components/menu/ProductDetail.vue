@@ -8,7 +8,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useMenuStore } from '@/stores/menu'
 import { useBranchStore } from '@/stores/branch'
 import { isConflict } from '@/lib/apiError'
-import type { Addon, Product } from '@/services/menu.api'
+import { formatCOP } from '@/lib/money'
+import type { Addon, Product, ProductVariant } from '@/services/menu.api'
 
 const props = defineProps<{ product: Product }>()
 const emit = defineEmits<{ back: [] }>()
@@ -172,10 +173,62 @@ async function toggleAddon(addon: Addon) {
   }
 }
 
-onMounted(() => {
-  branch.ensureLoaded()
+// --- Sellable variants -----------------------------------------------------
+// A variant's orderable price = the product's active-branch price + its extra_price.
+const variantError = ref<string | null>(null)
+const newVariantName = ref('')
+const addingVariant = ref(false)
+const variants = computed<ProductVariant[]>(
+  () => menu.variantsByProductId[props.product.id] ?? [],
+)
+const basePrice = computed<number | null>(() =>
+  priceInput.value !== '' && Number(priceInput.value) >= 0 ? Number(priceInput.value) : null,
+)
+
+function variantPriceLabel(v: ProductVariant): string {
+  if (basePrice.value === null) return `+ ${formatCOP(v.extra_price)}`
+  return formatCOP(basePrice.value + Number(v.extra_price))
+}
+
+async function loadVariants() {
+  try {
+    await menu.loadVariants(props.product.id)
+  } catch {
+    variantError.value = 'No se pudieron cargar las variantes.'
+  }
+}
+
+async function addVariant() {
+  const name = newVariantName.value.trim()
+  if (!name) return
+  addingVariant.value = true
+  variantError.value = null
+  try {
+    await menu.addVariant(props.product.id, { name })
+    newVariantName.value = ''
+  } catch {
+    variantError.value = 'No se pudo crear la variante.'
+  } finally {
+    addingVariant.value = false
+  }
+}
+
+async function removeVariant(v: ProductVariant) {
+  variantError.value = null
+  try {
+    await menu.removeVariant(props.product.id, v.id)
+  } catch (e) {
+    variantError.value = isConflict(e)
+      ? 'No se puede eliminar: la variante tiene pedidos asociados.'
+      : 'No se pudo eliminar la variante.'
+  }
+}
+
+onMounted(async () => {
+  await branch.ensureLoaded()
   loadPrice()
   loadAddons()
+  loadVariants()
 })
 </script>
 
@@ -289,7 +342,7 @@ onMounted(() => {
         <h4 class="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Precio (sucursal)</h4>
 
         <div v-if="!branch.hasActiveBranch" class="font-mono text-[11px] text-steel-500">
-          Selecciona una sucursal para fijar precios. (Configura <code>VITE_DEFAULT_BRANCH_ID</code> en el entorno.)
+          Esta cuenta aún no tiene sucursales para fijar precios.
         </div>
 
         <div v-else-if="priceLoaded" class="flex items-end gap-2">
@@ -317,6 +370,69 @@ onMounted(() => {
 
         <p v-if="priceSaved" class="mt-2 font-mono text-[11px] text-ember">Precio guardado.</p>
         <p v-if="priceError" role="alert" class="mt-2 font-mono text-[11px] text-alert">{{ priceError }}</p>
+      </section>
+
+      <!-- Sellable variants: the orderable SKUs of this product -->
+      <section class="mb-5 rounded-xl border border-line p-4">
+        <div class="mb-1 flex items-center justify-between gap-2">
+          <h4 class="font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Variantes vendibles</h4>
+        </div>
+        <p class="mb-3 font-mono text-[11px] text-steel-500">
+          Precio por variante = precio de sucursal + extra. Cada producto necesita al menos una para poder venderse.
+        </p>
+
+        <p v-if="variantError" role="alert" class="mb-2 font-mono text-[11px] text-alert">{{ variantError }}</p>
+
+        <p v-if="!variants.length" class="font-mono text-[11px] text-steel-500">
+          Aún no hay variantes. {{ canManage ? 'Agrega una (p. ej. “Estándar”).' : '' }}
+        </p>
+        <ul v-else class="mb-3 flex flex-col gap-1.5">
+          <li
+            v-for="v in variants"
+            :key="v.id"
+            class="flex items-center justify-between gap-3 rounded-lg border border-line bg-app px-3 py-2"
+          >
+            <span class="min-w-0">
+              <span class="block truncate text-sm text-ink">
+                {{ v.name || 'Estándar' }}
+                <span v-if="!v.is_active" class="font-mono text-[10px] uppercase tracking-wide text-steel-500">· inactiva</span>
+              </span>
+              <span class="font-mono text-[11px] text-steel-500">
+                {{ variantPriceLabel(v) }}
+              </span>
+            </span>
+            <button
+              v-if="canManage"
+              type="button"
+              class="shrink-0 text-steel-500 transition hover:text-alert focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-alert/30"
+              aria-label="Eliminar variante"
+              @click="removeVariant(v)"
+            >
+              <i class="pi pi-trash text-sm" />
+            </button>
+          </li>
+        </ul>
+
+        <div v-if="canManage" class="flex items-end gap-2 border-t border-line pt-3">
+          <div class="flex flex-1 flex-col gap-1.5">
+            <label for="variant-name" class="text-xs text-steel-500">Nueva variante</label>
+            <InputText
+              id="variant-name"
+              v-model="newVariantName"
+              placeholder="p. ej. Estándar, Grande"
+              fluid
+              @keyup.enter="addVariant"
+            />
+          </div>
+          <Button
+            label="Agregar"
+            size="small"
+            icon="pi pi-plus"
+            :loading="addingVariant"
+            :disabled="newVariantName.trim() === ''"
+            @click="addVariant"
+          />
+        </div>
       </section>
 
       <!-- Addons: interactive toggle chips -->
