@@ -119,7 +119,9 @@ export interface Delivery {
   longitude: string | null
   delivery_status: string
   route_position: number | null
+  notes: string | null
   delivered_at: string | null
+  created_at: string | null
 }
 
 export interface Run {
@@ -129,6 +131,7 @@ export interface Run {
   status: string
   departed_at: string | null
   finished_at: string | null
+  created_at: string | null
 }
 
 export interface CreateDeliveryInput {
@@ -160,7 +163,13 @@ export async function getOrderDelivery(orderId: string): Promise<Delivery> {
 
 export async function updateDelivery(
   deliveryId: string,
-  patch: { address_text?: string; neighborhood?: string | null },
+  patch: {
+    address_text?: string
+    neighborhood?: string | null
+    notes?: string | null
+    latitude?: string | null
+    longitude?: string | null
+  },
 ): Promise<Delivery> {
   return (await http.patch<Delivery>(`/delivery/deliveries/${deliveryId}`, patch)).data
 }

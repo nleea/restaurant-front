@@ -1,12 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const get = vi.fn<(...a: unknown[]) => unknown>()
-vi.mock('@/lib/http', () => ({ http: { get: (...a: unknown[]) => get(...a) } }))
+const post = vi.fn<(...a: unknown[]) => unknown>()
+const patch = vi.fn<(...a: unknown[]) => unknown>()
+vi.mock('@/lib/http', () => ({
+  http: {
+    get: (...a: unknown[]) => get(...a),
+    post: (...a: unknown[]) => post(...a),
+    patch: (...a: unknown[]) => patch(...a),
+  },
+}))
 
 import * as api from '../recipes.api'
 
 beforeEach(() => {
   get.mockReset()
+  post.mockReset()
+  patch.mockReset()
 })
 
 describe('recipes api layer', () => {
@@ -16,6 +26,19 @@ describe('recipes api layer', () => {
     expect(get).toHaveBeenCalledWith('/recipes/ingredients', { params: undefined })
     await api.listIngredients(true)
     expect(get).toHaveBeenLastCalledWith('/recipes/ingredients', { params: { active: 'true' } })
+  })
+
+  it('creates and updates an ingredient with category', async () => {
+    post.mockResolvedValue({ data: { id: 'i9', name: 'Camarón', category: 'Pescados' } })
+    patch.mockResolvedValue({ data: { id: 'i9', name: 'Camarón', category: 'Mariscos' } })
+    await api.createIngredient({ name: 'Camarón', category: 'Pescados', unit_of_measure_id: 'u1' })
+    expect(post).toHaveBeenCalledWith('/recipes/ingredients', {
+      name: 'Camarón',
+      category: 'Pescados',
+      unit_of_measure_id: 'u1',
+    })
+    await api.updateIngredient('i9', { category: 'Mariscos' })
+    expect(patch).toHaveBeenCalledWith('/recipes/ingredients/i9', { category: 'Mariscos' })
   })
 
   it('fetches the recipe card of a variant', async () => {

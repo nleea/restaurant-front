@@ -37,11 +37,30 @@ export const useDispatchStore = defineStore('dispatch', {
       (status: string): Run[] =>
         state.runs.filter((r) => r.status === status),
 
-    // A run's assigned deliveries (grouped via delivery_run_id).
+    // A run's assigned deliveries (grouped via delivery_run_id), ordered as stops:
+    // by route_position when set, then by creation time.
     deliveriesOfRun:
       (state) =>
       (runId: string): Delivery[] =>
-        state.deliveries.filter((d) => d.delivery_run_id === runId),
+        state.deliveries
+          .filter((d) => d.delivery_run_id === runId)
+          .sort(
+            (a, b) =>
+              (a.route_position ?? Number.MAX_SAFE_INTEGER) -
+                (b.route_position ?? Number.MAX_SAFE_INTEGER) ||
+              (a.created_at ?? '').localeCompare(b.created_at ?? ''),
+          ),
+
+    // Stop-strip progress for a run's card and detail.
+    runProgress:
+      (state) =>
+      (runId: string): { delivered: number; total: number } => {
+        const stops = state.deliveries.filter((d) => d.delivery_run_id === runId)
+        return {
+          delivered: stops.filter((d) => d.delivery_status === 'delivered').length,
+          total: stops.length,
+        }
+      },
 
     // Deliveries available to assign, and runs that can receive them.
     pendingDeliveries: (state): Delivery[] =>
@@ -67,6 +86,20 @@ export const useDispatchStore = defineStore('dispatch', {
       const run = await api.createRun(input)
       await this.loadRuns()
       return run
+    },
+
+    // --- Edit (write-through) --------------------------------------------------
+    async updateDeliveryNotes(deliveryId: string, notes: string | null): Promise<void> {
+      await api.updateDelivery(deliveryId, { notes })
+      await this.loadDeliveries()
+    },
+    async updateDeliveryLocation(
+      deliveryId: string,
+      latitude: string,
+      longitude: string,
+    ): Promise<void> {
+      await api.updateDelivery(deliveryId, { latitude, longitude })
+      await this.loadDeliveries()
     },
 
     // --- Lifecycle (write-through) -------------------------------------------

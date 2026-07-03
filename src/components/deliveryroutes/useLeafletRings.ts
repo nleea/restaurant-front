@@ -16,7 +16,7 @@ const CSS_URL = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`
 const JS_URL = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`
 
 /** Country-level view while a branch has no business pin yet. */
-const NO_PIN_VIEW: { center: [number, number]; zoom: number } = {
+export const NO_PIN_VIEW: { center: [number, number]; zoom: number } = {
   center: [4.6, -74.1],
   zoom: 6,
 }
@@ -29,13 +29,13 @@ interface LLayer {
   bindTooltip(content: string, options?: Record<string, unknown>): LLayer
   setTooltipContent(content: string): LLayer
 }
-interface LCircle extends LLayer {
+export interface LCircle extends LLayer {
   setRadius(meters: number): LCircle
   setStyle(style: Record<string, unknown>): LCircle
   setLatLng(center: [number, number]): LCircle
   getBounds(): unknown
 }
-interface LMap {
+export interface LMap {
   setView(center: [number, number], zoom: number): LMap
   flyToBounds(bounds: unknown, options?: Record<string, unknown>): LMap
   fitBounds(bounds: unknown, options?: Record<string, unknown>): LMap
@@ -44,7 +44,7 @@ interface LMap {
   invalidateSize(): LMap
   remove(): void
 }
-interface LeafletGlobal {
+export interface LeafletGlobal {
   map(el: HTMLElement, options?: Record<string, unknown>): LMap
   tileLayer(url: string, options?: Record<string, unknown>): LLayer
   circle(center: [number, number], options: Record<string, unknown>): LCircle
@@ -53,7 +53,7 @@ interface LeafletGlobal {
 
 let leafletPromise: Promise<LeafletGlobal> | null = null
 
-function ensureLeaflet(): Promise<LeafletGlobal> {
+export function ensureLeaflet(): Promise<LeafletGlobal> {
   if (leafletPromise) return leafletPromise
   leafletPromise = new Promise((resolve, reject) => {
     if (!document.querySelector(`link[href="${CSS_URL}"]`)) {

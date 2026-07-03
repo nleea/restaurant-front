@@ -43,7 +43,6 @@ const navGroups: NavGroup[] = [
     links: [
       { to: '/inventory', label: 'Inventario', icon: 'pi-box', permission: 'inventory.read' },
       { to: '/purchasing', label: 'Compras', icon: 'pi-truck', permission: 'purchasing.read' },
-      { to: '/procurement', label: 'Pedidos', icon: 'pi-shopping-cart', permission: 'purchasing.read' },
     ],
   },
   {

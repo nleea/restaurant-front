@@ -79,23 +79,22 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'cash.read' },
     },
     {
+      // The inventory board (stats/filters · table/cards · detail drawer).
       path: '/inventory',
       name: 'inventory',
       component: () => import('@/views/InventoryView.vue'),
       meta: { requiresAuth: true, permission: 'inventory.read' },
     },
+    // The board replaced the old two-column screen; the design-prototype URL redirects home.
+    { path: '/inventory/design', redirect: { name: 'inventory' } },
     {
       path: '/purchasing',
       name: 'purchasing',
       component: () => import('@/views/PurchasingView.vue'),
       meta: { requiresAuth: true, permission: 'purchasing.read' },
     },
-    {
-      path: '/procurement',
-      name: 'procurement',
-      component: () => import('@/views/ProcurementView.vue'),
-      meta: { requiresAuth: true, permission: 'purchasing.read' },
-    },
+    // The procure-to-pay screen was folded into the Compras board; the old route redirects.
+    { path: '/procurement', redirect: { name: 'purchasing' } },
     {
       path: '/finance',
       name: 'finance',
@@ -116,11 +115,14 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'delivery.read' },
     },
     {
+      // The dispatch board (three-pane: stats/filters · list · detail).
       path: '/dispatch',
       name: 'dispatch',
       component: () => import('@/views/DispatchView.vue'),
       meta: { requiresAuth: true, permission: 'delivery.read' },
     },
+    // The board replaced the old two-column screen; the design-prototype URL redirects home.
+    { path: '/dispatch/design', redirect: { name: 'dispatch' } },
     {
       path: '/audit',
       name: 'audit',

@@ -15,7 +15,11 @@ vi.mock('@/services/inventory.api', async (orig) => {
   return { ...actual, ...apiMock }
 })
 
-const recipesMock = vi.hoisted(() => ({ listIngredients: vi.fn<(...a: unknown[]) => unknown>() }))
+const recipesMock = vi.hoisted(() => ({
+  listIngredients: vi.fn<(...a: unknown[]) => unknown>(),
+  createIngredient: vi.fn<(...a: unknown[]) => unknown>(),
+  updateIngredient: vi.fn<(...a: unknown[]) => unknown>(),
+}))
 vi.mock('@/services/recipes.api', () => recipesMock)
 
 // Minimal catalog store stub: units array + fetchUnits, accessed by the inventory store.
@@ -40,6 +44,8 @@ beforeEach(() => {
   setActivePinia(createPinia())
   for (const fn of Object.values(apiMock)) fn.mockReset()
   recipesMock.listIngredients.mockReset()
+  recipesMock.createIngredient.mockReset()
+  recipesMock.updateIngredient.mockReset()
   catalogMock.fetchUnits.mockReset()
   catalogMock.units = [{ id: 'u-kg', abbreviation: 'kg' }]
   catalogMock.fetchUnits.mockResolvedValue(undefined)
@@ -132,5 +138,95 @@ describe('inventory store', () => {
     await inv.setThreshold('i1', '12.000')
     expect(apiMock.setThreshold).toHaveBeenCalledWith('b1', { ingredient_id: 'i1', min_stock: '12.000' })
     expect(inv.rows[0]?.low).toBe(true) // 10 <= 12
+  })
+
+  it('exposes categories, per-row category and the out flag', async () => {
+    apiMock.listStock.mockResolvedValue([
+      stock('i1', '0.000', '5.000'),
+      stock('i2', '9.000', '2.000'),
+    ])
+    recipesMock.listIngredients.mockResolvedValue([
+      { id: 'i1', name: 'Tomate', category: 'Verduras', unit_of_measure_id: 'u-kg', is_active: true },
+      { id: 'i2', name: 'Arroz', category: 'Granos', unit_of_measure_id: 'u-kg', is_active: true },
+    ])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+    expect(inv.categories).toEqual(['Granos', 'Verduras'])
+    const tomato = inv.rows.find((r) => r.name === 'Tomate')
+    expect(tomato?.category).toBe('Verduras')
+    expect(tomato?.out).toBe(true)
+    expect(inv.rows.find((r) => r.name === 'Arroz')?.out).toBe(false)
+  })
+
+  it('createInsumo composes ingredient + initial movement + threshold', async () => {
+    apiMock.listStock.mockResolvedValue([])
+    recipesMock.listIngredients.mockResolvedValue([])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+    recipesMock.createIngredient.mockResolvedValue({
+      id: 'i9',
+      name: 'Camarón',
+      category: 'Pescados',
+      unit_of_measure_id: 'u-kg',
+      is_active: true,
+    })
+    const result = await inv.createInsumo({
+      name: 'Camarón',
+      category: 'Pescados',
+      unitOfMeasureId: 'u-kg',
+      initialQuantity: '7.000',
+      minStock: '2.000',
+      employeeId: 'e1',
+    })
+    expect(result).toEqual({ ingredientId: 'i9', stockOk: true, thresholdOk: true })
+    expect(apiMock.registerMovement).toHaveBeenCalledWith(
+      'b1',
+      expect.objectContaining({ ingredient_id: 'i9', type: 'in', quantity: '7.000', reason: 'Stock inicial' }),
+    )
+    expect(apiMock.setThreshold).toHaveBeenCalledWith('b1', {
+      ingredient_id: 'i9',
+      min_stock: '2.000',
+    })
+  })
+
+  it('createInsumo reports partial success when the initial movement fails', async () => {
+    apiMock.listStock.mockResolvedValue([])
+    recipesMock.listIngredients.mockResolvedValue([])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+    recipesMock.createIngredient.mockResolvedValue({
+      id: 'i9',
+      name: 'Camarón',
+      category: null,
+      unit_of_measure_id: 'u-kg',
+      is_active: true,
+    })
+    apiMock.registerMovement.mockRejectedValue(new Error('boom'))
+    const result = await inv.createInsumo({
+      name: 'Camarón',
+      category: null,
+      unitOfMeasureId: 'u-kg',
+      initialQuantity: '7.000',
+      minStock: null,
+      employeeId: 'e1',
+    })
+    expect(result.stockOk).toBe(false)
+    expect(result.thresholdOk).toBe(true)
+  })
+
+  it('updateInsumo patches the ingredient and reloads the index', async () => {
+    apiMock.listStock.mockResolvedValue([])
+    recipesMock.listIngredients.mockResolvedValue([])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+    recipesMock.listIngredients.mockResolvedValue([
+      { id: 'i1', name: 'Tomate chonto', category: 'Verduras', unit_of_measure_id: 'u-kg', is_active: true },
+    ])
+    await inv.updateInsumo('i1', { name: 'Tomate chonto', category: 'Verduras' })
+    expect(recipesMock.updateIngredient).toHaveBeenCalledWith('i1', {
+      name: 'Tomate chonto',
+      category: 'Verduras',
+    })
+    expect(inv.ingredientLabel('i1')).toBe('Tomate chonto')
   })
 })

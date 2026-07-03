@@ -43,6 +43,11 @@ describe('delivery dispatch api layer', () => {
     expect(get).toHaveBeenCalledWith('/delivery/orders/o1/delivery')
     await api.updateDelivery('d1', { neighborhood: 'Centro' })
     expect(patch).toHaveBeenCalledWith('/delivery/deliveries/d1', { neighborhood: 'Centro' })
+    await api.updateDelivery('d1', { latitude: '11.5442000', longitude: '-72.9075000' })
+    expect(patch).toHaveBeenLastCalledWith('/delivery/deliveries/d1', {
+      latitude: '11.5442000',
+      longitude: '-72.9075000',
+    })
   })
 
   it('creates and lists runs', async () => {

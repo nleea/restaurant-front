@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 const apiMock = vi.hoisted(() => ({
   createDelivery: vi.fn<(...a: unknown[]) => unknown>(),
   listDeliveries: vi.fn<(...a: unknown[]) => unknown>(),
+  updateDelivery: vi.fn<(...a: unknown[]) => unknown>(),
   createRun: vi.fn<(...a: unknown[]) => unknown>(),
   listRuns: vi.fn<(...a: unknown[]) => unknown>(),
   assignDelivery: vi.fn<(...a: unknown[]) => unknown>(),
@@ -18,7 +19,12 @@ vi.mock('@/services/delivery.api', async (orig) => {
 
 import { useDispatchStore } from '../dispatch'
 
-const delivery = (id: string, status: string, runId: string | null = null) => ({
+const delivery = (
+  id: string,
+  status: string,
+  runId: string | null = null,
+  extra: Partial<{ route_position: number | null; created_at: string | null }> = {},
+) => ({
   id,
   order_id: `o-${id}`,
   delivery_route_id: null,
@@ -29,7 +35,10 @@ const delivery = (id: string, status: string, runId: string | null = null) => ({
   longitude: null,
   delivery_status: status,
   route_position: null,
+  notes: null,
   delivered_at: null,
+  created_at: null,
+  ...extra,
 })
 const run = (id: string, status: string) => ({
   id,
@@ -38,6 +47,7 @@ const run = (id: string, status: string) => ({
   status,
   departed_at: null,
   finished_at: null,
+  created_at: null,
 })
 
 beforeEach(() => {
@@ -96,6 +106,43 @@ describe('dispatch store', () => {
     await s.finishRun('run1')
     expect(apiMock.finishRun).toHaveBeenCalledWith('run1')
     expect(s.runs[0]?.status).toBe('finished')
+  })
+
+  it('orders a run’s stops by route_position, then creation time', async () => {
+    apiMock.listDeliveries.mockResolvedValue([
+      delivery('d-late', 'assigned', 'run1', { created_at: '2026-07-03T15:00:00Z' }),
+      delivery('d-early', 'assigned', 'run1', { created_at: '2026-07-03T14:00:00Z' }),
+      delivery('d-pos1', 'assigned', 'run1', { route_position: 1 }),
+      delivery('d-pos0', 'assigned', 'run1', { route_position: 0 }),
+    ])
+    const s = useDispatchStore()
+    await s.loadDeliveries()
+    expect(s.deliveriesOfRun('run1').map((d) => d.id)).toEqual([
+      'd-pos0',
+      'd-pos1',
+      'd-early',
+      'd-late',
+    ])
+  })
+
+  it('computes run progress from its stops', async () => {
+    apiMock.listDeliveries.mockResolvedValue([
+      delivery('d1', 'delivered', 'run1'),
+      delivery('d2', 'in_transit', 'run1'),
+      delivery('d3', 'in_transit', 'run1'),
+      delivery('d4', 'pending'),
+    ])
+    const s = useDispatchStore()
+    await s.loadDeliveries()
+    expect(s.runProgress('run1')).toEqual({ delivered: 1, total: 3 })
+  })
+
+  it('updating notes write-through refetches deliveries', async () => {
+    apiMock.listDeliveries.mockResolvedValue([delivery('d1', 'pending')])
+    const s = useDispatchStore()
+    await s.updateDeliveryNotes('d1', 'portón negro')
+    expect(apiMock.updateDelivery).toHaveBeenCalledWith('d1', { notes: 'portón negro' })
+    expect(apiMock.listDeliveries).toHaveBeenCalled()
   })
 
   it('creating a delivery and a run write-through refetch their lists', async () => {

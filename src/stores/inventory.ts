@@ -6,20 +6,45 @@ import type {
   RegisterMovementInput,
   Stock,
 } from '@/services/inventory.api'
-import { listIngredients } from '@/services/recipes.api'
+import {
+  createIngredient,
+  listIngredients,
+  updateIngredient,
+  type UpdateIngredientInput,
+} from '@/services/recipes.api'
 import { useCatalogStore } from '@/stores/catalog'
 
-// A stock row joined to its resolved label and a low-stock flag — the unit the list renders.
+// A stock row joined to its resolved label and stock-state flags — the unit the list renders.
 export interface StockRow {
   stock: Stock
   name: string
   unitAbbr: string
+  category: string | null
   low: boolean
+  out: boolean
 }
 
 interface IngredientInfo {
   name: string
   unitAbbr: string
+  unitId: string
+  category: string | null
+}
+
+// "Nuevo insumo" composes three real writes; the flags name what succeeded so the
+// UI can render partial-success copy ("insumo creado, falta el stock inicial").
+export interface CreateInsumoInput {
+  name: string
+  category: string | null
+  unitOfMeasureId: string
+  initialQuantity: string | null
+  minStock: string | null
+  employeeId: string | null
+}
+export interface CreateInsumoResult {
+  ingredientId: string
+  stockOk: boolean
+  thresholdOk: boolean
 }
 
 interface InventoryState {
@@ -57,7 +82,7 @@ export const useInventoryStore = defineStore('inventory', {
       (ingredientId: string): string =>
         state.ingredientIndex[ingredientId]?.name ?? `#${ingredientId.slice(0, 8)}`,
 
-    // Stock joined to labels + low flag, ordered low-first then by name.
+    // Stock joined to labels + state flags, ordered low-first then by name.
     rows: (state): StockRow[] => {
       const rows = state.stock.map((stock) => {
         const info = state.ingredientIndex[stock.ingredient_id]
@@ -65,7 +90,9 @@ export const useInventoryStore = defineStore('inventory', {
           stock,
           name: info?.name ?? `#${stock.ingredient_id.slice(0, 8)}`,
           unitAbbr: info?.unitAbbr ?? '',
+          category: info?.category ?? null,
           low: isLow(stock),
+          out: Number(stock.current_quantity) <= 0,
         }
       })
       return rows.sort((a, b) => {
@@ -77,6 +104,21 @@ export const useInventoryStore = defineStore('inventory', {
     lowRows(): StockRow[] {
       return this.rows.filter((r) => r.low)
     },
+
+    // Distinct categories present in the directory — feeds the board's filter and suggestions.
+    categories: (state): string[] =>
+      [
+        ...new Set(
+          Object.values(state.ingredientIndex)
+            .map((i) => i.category)
+            .filter((c): c is string => c !== null && c !== ''),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+
+    ingredientInfo:
+      (state) =>
+      (ingredientId: string): IngredientInfo | null =>
+        state.ingredientIndex[ingredientId] ?? null,
 
     selectedStock: (state): Stock | null =>
       state.stock.find((s) => s.ingredient_id === state.selectedIngredientId) ?? null,
@@ -98,6 +140,24 @@ export const useInventoryStore = defineStore('inventory', {
         index[ing.id] = {
           name: ing.name,
           unitAbbr: catalog.units.find((u) => u.id === ing.unit_of_measure_id)?.abbreviation ?? '',
+          unitId: ing.unit_of_measure_id,
+          category: ing.category ?? null,
+        }
+      }
+      this.ingredientIndex = index
+    },
+
+    // Rebuild the ingredient index after a create/edit (units are already cached).
+    async reloadIngredients(): Promise<void> {
+      const catalog = useCatalogStore()
+      const ingredients = await listIngredients()
+      const index: Record<string, IngredientInfo> = {}
+      for (const ing of ingredients) {
+        index[ing.id] = {
+          name: ing.name,
+          unitAbbr: catalog.units.find((u) => u.id === ing.unit_of_measure_id)?.abbreviation ?? '',
+          unitId: ing.unit_of_measure_id,
+          category: ing.category ?? null,
         }
       }
       this.ingredientIndex = index
@@ -124,6 +184,48 @@ export const useInventoryStore = defineStore('inventory', {
     async recount(input: RecountInput): Promise<void> {
       await api.recount(this.currentBranchId(), input)
       await this.afterWrite(input.ingredient_id)
+    },
+
+    // --- Insumo directory (recipes module, `recipes.write`) -------------------
+    // Ordered writes, never atomic: the result flags let the UI name what's pending.
+    async createInsumo(input: CreateInsumoInput): Promise<CreateInsumoResult> {
+      const ingredient = await createIngredient({
+        name: input.name,
+        category: input.category,
+        unit_of_measure_id: input.unitOfMeasureId,
+      })
+      let stockOk = true
+      let thresholdOk = true
+      if (input.initialQuantity && Number(input.initialQuantity) > 0 && input.employeeId) {
+        try {
+          await api.registerMovement(this.currentBranchId(), {
+            ingredient_id: ingredient.id,
+            employee_id: input.employeeId,
+            type: 'in',
+            quantity: input.initialQuantity,
+            reason: 'Stock inicial',
+          })
+        } catch {
+          stockOk = false
+        }
+      }
+      if (input.minStock && Number(input.minStock) >= 0) {
+        try {
+          await api.setThreshold(this.currentBranchId(), {
+            ingredient_id: ingredient.id,
+            min_stock: input.minStock,
+          })
+        } catch {
+          thresholdOk = false
+        }
+      }
+      await Promise.all([this.refreshStock(), this.reloadIngredients()])
+      return { ingredientId: ingredient.id, stockOk, thresholdOk }
+    },
+
+    async updateInsumo(ingredientId: string, patch: UpdateIngredientInput): Promise<void> {
+      await updateIngredient(ingredientId, patch)
+      await this.reloadIngredients()
     },
 
     // --- internal helpers ----------------------------------------------------

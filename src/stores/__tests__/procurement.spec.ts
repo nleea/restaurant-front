@@ -117,4 +117,73 @@ describe('procurement store', () => {
     const full = p.receiptProgress(orderItem('oi2', '5.000', '5.000'))
     expect(full.done).toBe(true)
   })
+
+  // --- Board helpers -------------------------------------------------------------------------
+  it('buckets branch orders by status and lists distinct suppliers', async () => {
+    apiMock.listOrders.mockResolvedValue([
+      { ...order('o1', '100.00'), status: 'created', supplier_id: 'sA' },
+      { ...order('o2', '100.00'), status: 'partially_received', supplier_id: 'sB' },
+      { ...order('o3', '100.00'), status: 'received', supplier_id: 'sA' },
+      { ...order('oX', '1.00', 'bX'), supplier_id: 'sZ' },
+    ])
+    const p = useProcurementStore()
+    await p.loadOrders()
+    expect(p.ordersByStatus.created.map((o) => o.id)).toEqual(['o1'])
+    expect(p.ordersByStatus.partially_received.map((o) => o.id)).toEqual(['o2'])
+    expect(p.ordersByStatus.received.map((o) => o.id)).toEqual(['o3'])
+    // distinct suppliers of the active branch only (bX excluded)
+    expect([...p.distinctOrderSupplierIds].sort()).toEqual(['sA', 'sB'])
+  })
+
+  it('sums por pagar over unpaid/partial branch orders, treating paid as zero', async () => {
+    apiMock.listOrders.mockResolvedValue([
+      { ...order('o1', '10000.00'), payment_status: 'pending' },
+      { ...order('o2', '5000.00'), payment_status: 'paid' },
+      { ...order('o3', '3000.00'), payment_status: 'partial' },
+      { ...order('oX', '9999.00', 'bX'), payment_status: 'pending' },
+    ])
+    apiMock.listPayments.mockResolvedValue([{ id: 'pay1', amount: '1000.00' }])
+    const p = useProcurementStore()
+    await p.loadOrders()
+    await p.loadPayments('o3') // o3 has 1000 paid → 2000 outstanding
+    // o1 10000 (no payments loaded) + o2 0 (paid) + o3 2000 = 12000; bX excluded
+    expect(p.payableTotal).toBe('12000.00')
+    const stats = p.orderStats
+    expect(stats.total).toBe(3)
+    expect(stats.created).toBe(3)
+    expect(stats.payable).toBe('12000.00')
+  })
+
+  it('flags orders with outstanding balance and partially received orders', async () => {
+    apiMock.listOrders.mockResolvedValue([
+      { ...order('o1', '100.00'), payment_status: 'paid', status: 'received' },
+      { ...order('o2', '100.00'), payment_status: 'pending', status: 'partially_received' },
+    ])
+    const p = useProcurementStore()
+    await p.loadOrders()
+    expect(p.ordersWithOutstanding.map((o) => o.id)).toEqual(['o2'])
+    expect(p.partiallyReceivedOrders.map((o) => o.id)).toEqual(['o2'])
+  })
+
+  it('derives aggregate order progress from loaded items, else from status', async () => {
+    apiMock.listOrders.mockResolvedValue([
+      { ...order('o1', '100.00'), status: 'partially_received' },
+      { ...order('o2', '100.00'), status: 'created' },
+    ])
+    apiMock.listOrderItems.mockResolvedValue([
+      orderItem('oi1', '4.000', '1.000'),
+      orderItem('oi2', '6.000', '2.000'),
+    ])
+    apiMock.listPayments.mockResolvedValue([])
+    const p = useProcurementStore()
+    await p.loadOrders()
+    // no items loaded for o2 → status estimate (created → 0)
+    expect(p.orderProgress('o2')).toMatchObject({ pct: 0, hasItems: false })
+    // items loaded for o1 → 3/10 = 30%
+    await p.selectOrder('o1')
+    const prog = p.orderProgress('o1')
+    expect(prog.pct).toBe(30)
+    expect(prog.hasItems).toBe(true)
+    expect(prog.done).toBe(false)
+  })
 })

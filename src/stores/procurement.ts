@@ -104,6 +104,102 @@ export const useProcurementStore = defineStore('procurement', {
           done: remainingMilli === 0,
         }
       },
+
+    // --- Board helpers (client-side, over the loaded branch orders) -------------------------
+    // Distinct supplier ids present in the branch's orders — feeds the toolbar supplier filter.
+    distinctOrderSupplierIds(): string[] {
+      const seen = new Set<string>()
+      for (const o of this.branchOrders) seen.add(o.supplier_id)
+      return [...seen]
+    },
+
+    // Orders bucketed by receipt status — one loaded list feeds stats, filters and alerts.
+    ordersByStatus(): Record<'created' | 'partially_received' | 'received', PurchaseOrder[]> {
+      const buckets: Record<'created' | 'partially_received' | 'received', PurchaseOrder[]> = {
+        created: [],
+        partially_received: [],
+        received: [],
+      }
+      for (const o of this.branchOrders) {
+        if (o.status === 'partially_received') buckets.partially_received.push(o)
+        else if (o.status === 'received') buckets.received.push(o)
+        else buckets.created.push(o)
+      }
+      return buckets
+    },
+
+    // Σ outstanding balance across the branch's unpaid/partial orders, in integer cents. A fully
+    // paid order contributes 0; for the rest, total − Σ (loaded) payments. Guidance only —
+    // payment_status stays authoritative.
+    payableTotal(state): string {
+      const branchId = useBranchStore().activeBranchId
+      let cents = 0
+      for (const o of state.orders) {
+        if (o.branch_id !== branchId || o.payment_status === 'paid') continue
+        const paid = (state.payments[o.id] ?? []).reduce((sum, p) => sum + toCents(p.amount), 0)
+        cents += Math.max(0, toCents(o.total) - paid)
+      }
+      return fromCents(cents)
+    },
+
+    // The stats row: counts by status + total por pagar, all from the loaded branch list.
+    orderStats(): {
+      total: number
+      created: number
+      partiallyReceived: number
+      received: number
+      payable: string
+    } {
+      const buckets = this.ordersByStatus
+      return {
+        total: this.branchOrders.length,
+        created: buckets.created.length,
+        partiallyReceived: buckets.partially_received.length,
+        received: buckets.received.length,
+        payable: this.payableTotal,
+      }
+    },
+
+    // Orders with an outstanding balance (not fully paid) and partially-received orders — the two
+    // alert affordances; derived from the branch list without a second fetch.
+    ordersWithOutstanding(): PurchaseOrder[] {
+      return this.branchOrders.filter((o) => o.payment_status !== 'paid')
+    },
+    partiallyReceivedOrders(): PurchaseOrder[] {
+      return this.branchOrders.filter((o) => o.status === 'partially_received')
+    },
+
+    // Aggregate receipt progress for one order — the depletion-bar analog. Exact when the order's
+    // items are loaded (Σ received / Σ ordered); otherwise a status-derived estimate (0/50/100)
+    // so the list stays single-fetch. State/colour always follow the authoritative order.status.
+    orderProgress:
+      (state) =>
+      (
+        orderId: string,
+      ): { received: number; ordered: number; pct: number; done: boolean; hasItems: boolean } => {
+        const order = state.orders.find((o) => o.id === orderId)
+        const items = state.orderItems[orderId] ?? []
+        if (items.length) {
+          const milli = (v: string): number => Math.round(Number(v) * 1000)
+          let ordered = 0
+          let received = 0
+          for (const it of items) {
+            ordered += milli(it.ordered_quantity)
+            received += milli(it.received_quantity)
+          }
+          const pct = ordered > 0 ? Math.min(100, Math.round((received / ordered) * 100)) : 0
+          return {
+            received: received / 1000,
+            ordered: ordered / 1000,
+            pct,
+            done: ordered > 0 && received >= ordered,
+            hasItems: true,
+          }
+        }
+        const status = order?.status
+        const pct = status === 'received' ? 100 : status === 'partially_received' ? 50 : 0
+        return { received: 0, ordered: 0, pct, done: status === 'received', hasItems: false }
+      },
   },
 
   actions: {
