@@ -5,10 +5,12 @@ import { getAccessToken, getRefreshToken, setTokens, clearTokens } from './token
 // Dev: app runs at demo.localhost:5173 -> API at demo.localhost:8000 (tenant = "demo").
 // There is no tenant_id in any request body. An explicit VITE_API_BASE_URL overrides this.
 function resolveBaseURL(): string {
-  const override = import.meta.env.VITE_API_BASE_URL
+  // Prioridad: runtime (env.js del pod) -> build-time (VITE_*) -> host del navegador.
+  const runtime = window.__ENV__ ?? {}
+  const override = runtime.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL
   if (override) return override
   const { protocol, hostname } = window.location
-  const port = import.meta.env.VITE_API_PORT ?? '8000'
+  const port = runtime.VITE_API_PORT || import.meta.env.VITE_API_PORT || '8000'
   return `${protocol}//${hostname}:${port}`
 }
 

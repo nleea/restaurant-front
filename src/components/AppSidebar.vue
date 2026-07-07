@@ -18,7 +18,8 @@ interface NavLink {
   to: string
   label: string
   icon: string
-  permission: string
+  /** Omit to make the link visible to any authenticated user (e.g. self-service). */
+  permission?: string
 }
 
 interface NavGroup {
@@ -28,6 +29,12 @@ interface NavGroup {
 }
 
 const navGroups: NavGroup[] = [
+  {
+    title: 'Mi espacio',
+    links: [
+      { to: '/my-schedule', label: 'Mi horario', icon: 'pi-clock' },
+    ],
+  },
   {
     title: 'Servicio',
     links: [
@@ -58,6 +65,7 @@ const navGroups: NavGroup[] = [
       { to: '/finance', label: 'Finanzas', icon: 'pi-chart-line', permission: 'finance.read' },
       { to: '/customers', label: 'Clientes', icon: 'pi-id-card', permission: 'customers.read' },
       { to: '/staff', label: 'Personal', icon: 'pi-users', permission: 'staff.read' },
+      { to: '/shifts', label: 'Turnos', icon: 'pi-calendar', permission: 'staff.read' },
       { to: '/audit', label: 'Auditoría', icon: 'pi-history', permission: 'audit.read' },
       { to: '/rbac', label: 'Accesos', icon: 'pi-shield', permission: 'rbac.manage' },
     ],
@@ -67,7 +75,10 @@ const navGroups: NavGroup[] = [
 // Filter each group by permission, then drop groups that ended up empty.
 const groups = computed(() =>
   navGroups
-    .map((g) => ({ title: g.title, links: g.links.filter((l) => auth.can(l.permission)) }))
+    .map((g) => ({
+      title: g.title,
+      links: g.links.filter((l) => !l.permission || auth.can(l.permission)),
+    }))
     .filter((g) => g.links.length > 0),
 )
 

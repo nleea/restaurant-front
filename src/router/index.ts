@@ -63,6 +63,21 @@ const router = createRouter({
       component: () => import('@/views/StaffView.vue'),
       meta: { requiresAuth: true, permission: 'staff.read' },
     },
+    {
+      // The weekly shift line-up board (admin: reads real shifts, edits schedule).
+      path: '/shifts',
+      name: 'shifts',
+      component: () => import('@/views/ShiftsView.vue'),
+      meta: { requiresAuth: true, permission: 'staff.read' },
+    },
+    {
+      // Employee self-view: own weekly schedule + day-off requests. No permission
+      // gate — any authenticated employee reaches it (uses the "me" endpoints).
+      path: '/my-schedule',
+      name: 'my-schedule',
+      component: () => import('@/views/MyScheduleView.vue'),
+      meta: { requiresAuth: true },
+    },
     // The standalone "Comandas" screen was replaced by the Salón floor; keep the old
     // path working as a redirect.
     { path: '/orders', redirect: { name: 'floor' } },
@@ -96,11 +111,15 @@ const router = createRouter({
     // The procure-to-pay screen was folded into the Compras board; the old route redirects.
     { path: '/procurement', redirect: { name: 'purchasing' } },
     {
+      // Consolidated Finanzas: the six-tab module (Resumen, Ingresos, Gastos,
+      // Rentabilidad, Reporte Z, Reportes). The old expenses-only view is now the
+      // Gastos tab, so `/finance/z` redirects here and there is one sidebar entry.
       path: '/finance',
       name: 'finance',
-      component: () => import('@/views/FinanceView.vue'),
+      component: () => import('@/views/FinanceZReportView.vue'),
       meta: { requiresAuth: true, permission: 'finance.read' },
     },
+    { path: '/finance/z', redirect: { name: 'finance' } },
     {
       path: '/customers',
       name: 'customers',
