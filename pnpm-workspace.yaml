@@ -1,2 +1,6 @@
-allowBuilds:
-  cypress: set this to true or false
+# Aprobacion de build scripts de dependencias (pnpm 10).
+# Cypress es solo para e2e (scripts deshabilitados) y su postinstall (descarga
+# del binario) no se necesita para compilar la SPA -> lo ignoramos para que
+# `pnpm install` sea no-interactivo en CI/Docker.
+ignoredBuiltDependencies:
+  - cypress
