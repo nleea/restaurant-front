@@ -1,12 +1,19 @@
 import { defineStore } from 'pinia'
+import { baseURL } from '@/lib/http'
+import { createLiveRefetch, type LiveRefetch } from '@/composables/useLiveRefetch'
 import * as api from '@/services/delivery.api'
 import type {
   CreateRouteInput,
   DeliverySettings,
   Route,
   RouteDriver,
+  TariffBand,
   UpdateRouteInput,
 } from '@/services/delivery.api'
+import { useDispatchStore } from '@/stores/dispatch'
+
+// Live-refetch handle (module-level plumbing, like the poll/SSE state in stores/kitchen.ts).
+let live: LiveRefetch | undefined
 
 interface DeliveryState {
   // The branch whose routes are loaded (held so driver writes can refetch the right route list).
@@ -17,6 +24,8 @@ interface DeliveryState {
   drivers: RouteDriver[]
   // Coverage-map config (lazy-created server-side; null coords = pin not placed yet).
   settings: DeliverySettings | null
+  // La escalera de precios del domicilio. Vacía = la sede no cotiza nada todavía.
+  tariffBands: TariffBand[]
 }
 
 // Branch-scoped delivery routes + their drivers. Write-through discipline (as in the inventory/
@@ -29,6 +38,7 @@ export const useDeliveryStore = defineStore('delivery', {
     selectedRouteId: null,
     drivers: [],
     settings: null,
+    tariffBands: [],
   }),
 
   getters: {
@@ -53,6 +63,16 @@ export const useDeliveryStore = defineStore('delivery', {
     ): Promise<void> {
       if (!this.branchId) return
       this.settings = await api.updateSettings(this.branchId, patch)
+    },
+
+    // --- Tarifas por kilómetros (write-through) -------------------------------
+    async loadTariffBands(branchId: string): Promise<void> {
+      this.tariffBands = await api.listTariffBands(branchId)
+    },
+    /** Reemplaza el plan entero: es una escalera, no una lista de filas independientes. */
+    async saveTariffBands(bands: api.TariffBandInput[]): Promise<void> {
+      if (!this.branchId) return
+      this.tariffBands = await api.replaceTariffBands(this.branchId, bands)
     },
 
     async selectRoute(routeId: string): Promise<void> {
@@ -91,6 +111,26 @@ export const useDeliveryStore = defineStore('delivery', {
     },
     async refreshDrivers(routeId: string): Promise<void> {
       if (this.selectedRouteId === routeId) this.drivers = await api.listDrivers(routeId)
+    },
+
+    // --- Live coverage map (SSE doorbell → debounced refetch, polling fallback) -----
+    // The map overlays the open delivery drops (dispatch.deliveries). Subscribing to the branch's
+    // `delivery` stream refetches those so a new delivery — or a pin the geocoding worker just
+    // resolved — appears without a manual refresh. Start on view mount, stop on unmount.
+    startLive(branchId: string): void {
+      this.stopLive()
+      const dispatch = useDispatchStore()
+      live = createLiveRefetch({
+        url: `${baseURL}/delivery/events?branch_id=${branchId}`,
+        onDoorbell: async () => {
+          await dispatch.refetchDeliveries()
+        },
+      })
+      live.start()
+    },
+    stopLive(): void {
+      live?.stop()
+      live = undefined
     },
   },
 })

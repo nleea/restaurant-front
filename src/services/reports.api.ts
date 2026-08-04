@@ -47,6 +47,29 @@ export interface ZReport {
   top_product_units: number
 }
 
+// A closed shift's operational record (orders + deliveries) — history beside the Z.
+export interface ShiftOrderRow {
+  id: string
+  channel: string
+  status: string
+  total: string
+  created_at: string | null
+}
+export interface ShiftDeliveryRow {
+  order_id: string
+  delivery_status: string
+  address_text: string
+  neighborhood: string | null
+}
+export interface ShiftRecord {
+  orders: ShiftOrderRow[]
+  deliveries: ShiftDeliveryRow[]
+}
+
+export async function getShiftRecord(cashSessionId: string): Promise<ShiftRecord> {
+  return (await http.get<ShiftRecord>(`/reports/shift/${cashSessionId}`)).data
+}
+
 export async function getZReport(cashSessionId: string): Promise<ZReport> {
   return (await http.get<ZReport>(`/reports/z/${cashSessionId}`)).data
 }

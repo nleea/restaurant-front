@@ -51,6 +51,7 @@ const ticket = (id: string, status: string, itemId = 'i1', role: string | null =
   ready_at: null,
   role,
   tasks: [] as string[],
+  notes: null as string | null,
 })
 
 beforeEach(() => {
@@ -185,14 +186,16 @@ describe('kitchen store', () => {
   })
 
   it('updateMapping patches role/tasks in place and refetches the product mappings', async () => {
-    apiMock.updateProductStation.mockResolvedValue({ id: 'm1', tasks: ['Carne'] })
+    // Una tarea derivada lleva su insumo: es lo que deja resolver la cantidad por variante.
+    const task = { label: 'Carne', ingredient_id: 'i1' }
+    apiMock.updateProductStation.mockResolvedValue({ id: 'm1', tasks: [task] })
     apiMock.listProductStations.mockResolvedValue([
-      { id: 'm1', product_id: 'p1', kitchen_station_id: 's1', role: 'Parrilla', tasks: ['Carne'] },
+      { id: 'm1', product_id: 'p1', kitchen_station_id: 's1', role: 'Parrilla', tasks: [task] },
     ])
     const k = useKitchenStore()
-    await k.updateMapping('p1', 'm1', { tasks: ['Carne'] })
-    expect(apiMock.updateProductStation).toHaveBeenCalledWith('m1', { tasks: ['Carne'] })
-    expect(k.stationsForProduct('p1')[0]?.tasks).toEqual(['Carne'])
+    await k.updateMapping('p1', 'm1', { tasks: [task] })
+    expect(apiMock.updateProductStation).toHaveBeenCalledWith('m1', { tasks: [task] })
+    expect(k.stationsForProduct('p1')[0]?.tasks).toEqual([task])
   })
 
   it('exposes allTickets flattened across stations and an order_item→order index', () => {

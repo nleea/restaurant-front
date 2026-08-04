@@ -9,6 +9,7 @@ const apiMock = vi.hoisted(() => ({
   closeSession: vi.fn<(...a: unknown[]) => unknown>(),
   registerMovement: vi.fn<(...a: unknown[]) => unknown>(),
   listMovements: vi.fn<(...a: unknown[]) => unknown>(),
+  getSessionSummary: vi.fn<(...a: unknown[]) => unknown>(),
 }))
 vi.mock('@/services/cash.api', async (orig) => {
   const actual = (await orig()) as object
@@ -47,6 +48,9 @@ const notFound = Object.assign(new Error('not found'), { response: { status: 404
 beforeEach(() => {
   setActivePinia(createPinia())
   for (const fn of Object.values(apiMock)) fn.mockReset()
+  // The shift-summary fetch is best-effort inside loadBranchCash/openSession/registerMovement;
+  // stub it so it never reaches the real http layer during these ledger-focused tests.
+  apiMock.getSessionSummary.mockResolvedValue(null)
 })
 
 describe('cash store', () => {

@@ -39,6 +39,12 @@ export interface Order {
   whatsapp_contact_id: string | null
   closed_at: string | null
   kitchen_state: KitchenState
+  /**
+   * Intención de pago con la que nació el pedido (`cash`, `transfer`, `card`…). En el
+   * storefront la elige el cliente; no implica que ya esté pagado. Un método distinto de
+   * `cash` exige verificar el comprobante antes de que el pedido llegue a cocina.
+   */
+  payment_method: string | null
 }
 
 export interface OrderItem {
@@ -49,6 +55,10 @@ export interface OrderItem {
   unit_price: string
   line_subtotal: string
   status: string
+  /** Free-text kitchen note ("sin lechuga"), set at add time. */
+  notes: string | null
+  /** True once the item has been routed to the kitchen (has a ticket) — pending until then. */
+  sent: boolean
 }
 
 // Payment methods are owned by the client: the backend accepts any ≤30-char string for `method`,
@@ -128,6 +138,109 @@ export async function setDiscount(orderId: string, discount: string): Promise<Or
   return (await http.put<Order>(`/orders/${orderId}/discount`, { discount })).data
 }
 
+/**
+ * Dar por bueno el pago de un pedido prepagado y mandarlo a cocina, en un gesto.
+ *
+ * No lleva monto ni método: ambos salen del propio pedido. Verificar no es cobrar una cifra
+ * que alguien teclea, es confirmar que llegó lo que el pedido decía que iba a llegar.
+ */
+export async function verifyPayment(
+  orderId: string,
+  employeeId: string,
+): Promise<Order> {
+  return (
+    await http.post<Order>(`/orders/${orderId}/verify-payment`, {
+      employee_id: employeeId,
+    })
+  ).data
+}
+
+// --- Comprobantes que manda el cliente ---------------------------------------
+/**
+ * Lo que el cliente DICE que pagó, con su comprobante. **No es un pago**: vive en su propia
+ * tabla y no suma al saldo. Lo que cobra es `verifyPayment`, y sólo cuando una persona mira
+ * que la plata llegó.
+ */
+export interface PaymentClaim {
+  id: string
+  order_id: string
+  amount: string
+  method: string
+  proof_url: string | null
+  status: 'pending' | 'accepted' | 'rejected'
+  rejection_reason: string | null
+  created_at: string | null
+}
+
+export async function listPaymentClaims(orderId: string): Promise<PaymentClaim[]> {
+  return (await http.get<PaymentClaim[]>(`/orders/${orderId}/payment-claims`)).data
+}
+
+/** El comprobante no sirve. Exige motivo: es lo único que el cliente va a leer. */
+export async function rejectPaymentClaim(
+  orderId: string,
+  claimId: string,
+  reason: string,
+  employeeId: string,
+): Promise<PaymentClaim> {
+  return (
+    await http.post<PaymentClaim>(
+      `/orders/${orderId}/payment-claims/${claimId}/reject`,
+      { reason, employee_id: employeeId },
+    )
+  ).data
+}
+
+// --- Devoluciones -----------------------------------------------------------
+export type RefundStatus = 'pending' | 'done' | 'cancelled'
+
+export interface OrderRefund {
+  id: string
+  order_id: string
+  branch_id: string
+  amount: string
+  /** El método por el que ENTRÓ la plata, que es por el que tiene que salir. */
+  method: string
+  status: RefundStatus
+  resolved_by_employee_id: string | null
+  resolved_at: string | null
+  reason: string | null
+  created_at: string | null
+}
+
+export async function listRefunds(
+  branchId: string,
+  status: RefundStatus | null = 'pending',
+): Promise<OrderRefund[]> {
+  const params: Record<string, string> = { branch_id: branchId }
+  if (status) params.status_filter = status
+  return (await http.get<OrderRefund[]>('/refunds', { params })).data
+}
+
+export async function confirmRefund(
+  refundId: string,
+  employeeId: string,
+): Promise<OrderRefund> {
+  return (
+    await http.post<OrderRefund>(`/refunds/${refundId}/confirm`, {
+      employee_id: employeeId,
+    })
+  ).data
+}
+
+export async function cancelRefund(
+  refundId: string,
+  employeeId: string,
+  reason: string,
+): Promise<OrderRefund> {
+  return (
+    await http.post<OrderRefund>(`/refunds/${refundId}/cancel`, {
+      employee_id: employeeId,
+      reason,
+    })
+  ).data
+}
+
 export async function closeOrder(orderId: string): Promise<Order> {
   return (await http.post<Order>(`/orders/${orderId}/close`)).data
 }
@@ -139,6 +252,12 @@ export async function cancelOrder(
   return (await http.post<Order>(`/orders/${orderId}/cancel`, input)).data
 }
 
+// Attach an existing registered customer to an OPEN order so it can be closed on credit (fiado).
+// 404 if the customer doesn't exist; 409 if the order isn't open.
+export async function assignCustomer(orderId: string, customerId: string): Promise<Order> {
+  return (await http.post<Order>(`/orders/${orderId}/customer`, { customer_id: customerId })).data
+}
+
 // --- Items ---------------------------------------------------------------------------------
 export async function listItems(orderId: string): Promise<OrderItem[]> {
   return (await http.get<OrderItem[]>(`/orders/${orderId}/items`)).data
@@ -146,7 +265,12 @@ export async function listItems(orderId: string): Promise<OrderItem[]> {
 
 export async function addItem(
   orderId: string,
-  input: { product_variant_id: string; quantity: number; unit_price: string },
+  input: {
+    product_variant_id: string
+    quantity: number
+    unit_price: string
+    notes?: string | null
+  },
 ): Promise<OrderItem> {
   return (await http.post<OrderItem>(`/orders/${orderId}/items`, input)).data
 }
@@ -156,6 +280,11 @@ export async function updateItemQuantity(
   quantity: number,
 ): Promise<OrderItem> {
   return (await http.patch<OrderItem>(`/orders/items/${itemId}`, { quantity })).data
+}
+
+// The kitchen note, editable on the dupe for as long as the order is open. `null` clears it.
+export async function setItemNotes(itemId: string, notes: string | null): Promise<OrderItem> {
+  return (await http.put<OrderItem>(`/orders/items/${itemId}/notes`, { notes })).data
 }
 
 export async function removeItem(itemId: string): Promise<void> {
