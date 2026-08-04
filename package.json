@@ -10,14 +10,14 @@
     "preview": "vite preview",
     "test:unit": "vitest",
     "_disabled_prepare": "cypress install",
-    "_disabled_test:e2e": "start-server-and-test preview http://localhost:4173 'cypress run --e2e'",
-    "_disabled_test:e2e:dev": "start-server-and-test 'vite dev --port 4173' http://localhost:4173 'cypress open --e2e'",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "lint": "run-s \"lint:*\"",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",
-    "format": "prettier --write --experimental-cli src/"
+    "format": "prettier --write --experimental-cli src/",
+    "test:e2e": "start-server-and-test preview http://localhost:4173 'cypress run --e2e'",
+    "test:e2e:dev": "start-server-and-test 'vite dev --port 4173' http://localhost:4173 'cypress open --e2e'"
   },
   "dependencies": {
     "@primeuix/themes": "^2.0.3",
@@ -64,6 +64,8 @@
   },
   "pnpm": {
     "//": "Cypress is parked (e2e scripts disabled). Acknowledge its build script so install stays clean.",
-    "ignoredBuiltDependencies": ["cypress"]
+    "ignoredBuiltDependencies": [
+      "cypress"
+    ]
   }
 }

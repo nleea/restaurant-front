@@ -53,6 +53,8 @@ export interface KdsItem {
   qty: number
   name: string
   modifiers: string[]
+  /** Free-text kitchen note carried from the order item ("sin lechuga"); null when none. */
+  note?: string | null
   components: KdsComponent[]
   /** Product variant behind the dish — lets the recipe drawer fetch the real recipe card. */
   variantId?: string | null

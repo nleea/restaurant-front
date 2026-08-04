@@ -18,6 +18,7 @@ const order = (
   status = 'open',
   kitchenState: KitchenState = 'none',
 ): Order => ({
+  payment_method: 'cash',
   id,
   branch_id: 'b1',
   channel: tableId ? 'dine_in' : 'takeaway',

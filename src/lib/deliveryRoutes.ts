@@ -139,6 +139,52 @@ export function openDeliveryPoints(deliveries: PlottableDelivery[]): {
   return { points, unlocated }
 }
 
+// --- Live driver layer -------------------------------------------------------
+// Active drivers on the coverage map: a distinct current marker (labeled with the driver's name
+// + how fresh the fix is) and their trail as a polyline. A separate layer from delivery drops
+// (demand) and rings (coverage): the marker is an actor, not a drop.
+
+/** Older than this, a driver's position is de-emphasized rather than shown as if live. */
+export const DRIVER_STALE_MS = 2 * 60_000
+
+export interface DriverMarkerInput {
+  /** The active run this marker belongs to (its identity on the map). */
+  runId: string
+  /** The driver's name (resolved by the caller), shown on the marker. */
+  label: string
+  /** Current position. */
+  coords: [number, number]
+  /** Ordered trail points (current point last); a polyline is drawn when ≥ 2. */
+  trail: [number, number][]
+  /** Human freshness, e.g. "hace 3 min". */
+  ageLabel: string
+  /** Whether the position is stale (past the threshold) → de-emphasized styling. */
+  stale: boolean
+}
+
+/** "ahora" / "hace 3 min" / "hace 1 h" from an ISO timestamp — never implies more freshness. */
+export function driverAgeLabel(recordedAtIso: string, now: number = Date.now()): string {
+  const t = Date.parse(recordedAtIso)
+  if (Number.isNaN(t)) return 'sin hora'
+  const min = Math.floor(Math.max(0, now - t) / 60_000)
+  if (min < 1) return 'ahora'
+  if (min === 1) return 'hace 1 min'
+  if (min < 60) return `hace ${min} min`
+  const h = Math.floor(min / 60)
+  return h === 1 ? 'hace 1 h' : `hace ${h} h`
+}
+
+/** Is a fix older than the staleness threshold (or untimestamped)? */
+export function isPositionStale(
+  recordedAtIso: string,
+  now: number = Date.now(),
+  thresholdMs: number = DRIVER_STALE_MS,
+): boolean {
+  const t = Date.parse(recordedAtIso)
+  if (Number.isNaN(t)) return true
+  return now - t > thresholdMs
+}
+
 export function seedDrivers(): Driver[] {
   return [
     { id: 'd1', name: 'Diego Repartidor', status: 'on_route' },

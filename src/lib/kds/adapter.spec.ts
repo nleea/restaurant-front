@@ -23,6 +23,7 @@ function ticket(partial: Partial<Ticket> & { id: string }): Ticket {
     ready_at: null,
     role: null,
     tasks: [],
+    notes: null,
     ...partial,
   }
 }
