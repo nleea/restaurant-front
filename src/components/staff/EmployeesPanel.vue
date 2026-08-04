@@ -1,15 +1,17 @@
 <script setup lang="ts">
+// Master–detail orchestrator for Personal, following the RBAC screen's pattern: one list that
+// becomes a full-screen detail under `lg`, both panes at once above it.
 import { computed, onMounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
-import ToggleSwitch from 'primevue/toggleswitch'
 import { useAuthStore } from '@/stores/auth'
 import { useBranchStore } from '@/stores/branch'
 import { useStaffStore } from '@/stores/staff'
 import { statusOf } from '@/lib/apiError'
-import EmployeeDetail from '@/components/staff/EmployeeDetail.vue'
+import EmployeeList from '@/components/staff/EmployeeList.vue'
+import EmployeeDetailPanel from '@/components/staff/EmployeeDetailPanel.vue'
 import type { Employee } from '@/services/staff.api'
 
 const auth = useAuthStore()
@@ -17,7 +19,14 @@ const branch = useBranchStore()
 const staff = useStaffStore()
 const canManage = computed(() => auth.can('staff.manage'))
 
-const selected = ref<Employee | null>(null)
+// Selection is held by id, never by the employee object: every mutation refetches the list and
+// replaces those objects, and a captured reference would freeze the detail on stale state —
+// the badge would stop tracking active/inactive right where the toggle needs it to.
+const selectedId = ref<string | null>(null)
+const selected = computed<Employee | null>(
+  () => staff.employees.find((e) => e.id === selectedId.value) ?? null,
+)
+
 const error = ref<string | null>(null)
 const loading = ref(false)
 const activeOnly = ref(true)
@@ -40,7 +49,7 @@ onMounted(load)
 watch(
   () => branch.activeBranchId,
   () => {
-    selected.value = null
+    selectedId.value = null
     void load()
   },
 )
@@ -49,9 +58,11 @@ const visibleEmployees = computed(() =>
   activeOnly.value ? staff.employees.filter((e) => e.is_active) : staff.employees,
 )
 
-const roleOptions = computed(() =>
-  staff.roles.map((r) => ({ label: r.name, value: r.id })),
-)
+// Keep a selected employee on screen even after they're filtered out of the list: hiding the
+// detail the instant someone is deactivated would take the reactivate switch away with it.
+const detailEmployee = computed(() => selected.value)
+
+const roleOptions = computed(() => staff.roles.map((r) => ({ label: r.name, value: r.id })))
 
 // --- Add-employee dialog ---------------------------------------------------
 const showForm = ref(false)
@@ -96,7 +107,7 @@ async function submit() {
       role_id: fRoleId.value,
       branch_id: branch.activeBranchId,
     })
-    selected.value = staff.employees.find((e) => e.id === employee.id) ?? employee
+    selectedId.value = employee.id
     showForm.value = false
   } catch (e) {
     const status = statusOf(e)
@@ -113,86 +124,38 @@ async function submit() {
 </script>
 
 <template>
-  <div class="lg:grid lg:grid-cols-[20rem_1fr] lg:gap-6">
-    <!-- LIST (drill-down master) -->
-    <aside class="flex flex-col gap-3" :class="selected ? 'max-lg:hidden' : ''">
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="font-mono text-[11px] uppercase tracking-[0.18em] text-steel-500">Empleados</h2>
-        <Button
-          v-if="canManage"
-          label="Nuevo"
-          size="small"
-          icon="pi pi-plus"
-          :disabled="!branch.hasActiveBranch"
-          @click="openCreate"
-        />
-      </div>
+  <div class="lg:grid lg:grid-cols-[20rem_1fr] lg:items-start lg:gap-6">
+    <EmployeeList
+      :class="detailEmployee ? 'max-lg:hidden' : ''"
+      :employees="visibleEmployees"
+      :selected-id="selectedId"
+      v-model:active-only="activeOnly"
+      :can-manage="canManage"
+      :loading="loading"
+      :error="error"
+      :has-active-branch="branch.hasActiveBranch"
+      @select="selectedId = $event.id"
+      @create="openCreate"
+    />
 
-      <label class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-steel-500">
-        <ToggleSwitch v-model="activeOnly" />
-        Solo activos
-      </label>
-
-      <p v-if="error" role="alert" class="rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
-        {{ error }}
-      </p>
-      <p v-else-if="!branch.hasActiveBranch" class="rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] text-steel-500">
-        Esta cuenta aún no tiene sucursales.
-      </p>
-      <div v-if="loading" class="text-steel-500">Cargando personal…</div>
-
-      <p v-else-if="!visibleEmployees.length" class="text-steel-500">
-        No hay empleados en esta sucursal.
-      </p>
-
-      <ul v-else class="flex flex-col gap-1.5">
-        <li v-for="emp in visibleEmployees" :key="emp.id">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-paper px-3.5 py-3 text-left transition hover:border-ember/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
-            :class="selected?.id === emp.id ? 'border-ember ring-1 ring-ember/30' : ''"
-            @click="selected = emp"
-          >
-            <span class="min-w-0">
-              <span class="block truncate text-sm font-medium text-ink">{{ staff.employeeName(emp) }}</span>
-              <span class="block truncate font-mono text-[10px] uppercase tracking-wide text-steel-500">
-                {{ staff.roleName(emp.role_id) }} · {{ staff.branchName(emp.branch_id) }}
-              </span>
-            </span>
-            <span class="flex shrink-0 items-center gap-2">
-              <span
-                v-if="!emp.is_active"
-                class="rounded-full bg-steel-500/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-steel-500"
-              >
-                Inactivo
-              </span>
-              <span class="text-steel-500 lg:hidden" aria-hidden="true">
-                <i class="pi pi-angle-right" />
-              </span>
-            </span>
-          </button>
-        </li>
-      </ul>
-    </aside>
-
-    <!-- DETAIL -->
     <section
       class="rounded-xl border border-line bg-paper"
-      :class="selected ? 'max-lg:mt-0' : 'max-lg:hidden'"
+      :class="detailEmployee ? 'max-lg:mt-0' : 'max-lg:hidden'"
     >
-      <div v-if="!selected" class="grid h-48 place-items-center px-6 text-center text-steel-500">
+      <div
+        v-if="!detailEmployee"
+        class="grid h-48 place-items-center px-6 text-center text-sm text-steel-500"
+      >
         Elige un empleado para ver su detalle.
       </div>
 
-      <Transition name="detail">
-        <EmployeeDetail
-          v-if="selected"
-          :key="selected.id"
-          :employee="selected"
-          :can-manage="canManage"
-          @back="selected = null"
-        />
-      </Transition>
+      <EmployeeDetailPanel
+        v-else
+        :key="detailEmployee.id"
+        :employee="detailEmployee"
+        :can-manage="canManage"
+        @back="selectedId = null"
+      />
     </section>
 
     <!-- Add-employee dialog -->

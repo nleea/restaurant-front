@@ -51,6 +51,7 @@ function seedBoard(variantId: string | null): void {
         ready_at: null,
         role: null,
         tasks: [],
+        notes: null,
       },
     ],
   }

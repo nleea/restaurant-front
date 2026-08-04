@@ -1,16 +1,40 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import { useAuthStore } from '@/stores/auth'
 import { formatCOP } from '@/lib/money'
 import type { TableVM } from '@/lib/floorModel'
 
-const props = defineProps<{ vm: TableVM; canOpen: boolean; opening: boolean; openError: string | null }>()
-const emit = defineEmits<{ 'take-order': []; 'open-ticket': []; close: [] }>()
+const props = defineProps<{
+  vm: TableVM
+  canOpen: boolean
+  opening: boolean
+  openError: string | null
+  releasing?: boolean
+  releaseError?: string | null
+}>()
+const emit = defineEmits<{
+  'take-order': []
+  'open-ticket': []
+  release: [reason: string]
+  close: []
+}>()
 
 const auth = useAuthStore()
 const table = computed(() => props.vm.table)
 const canUpdate = computed(() => auth.can('orders.update'))
+
+// One-tap reasons so releasing a table needs no typing (the reason is required by cancel_order).
+const RELEASE_REASONS = ['Cliente se fue', 'Mesa equivocada'] as const
+const confirming = ref(false)
+
+// Reset the inline confirm when the panel switches to another table (the instance is reused).
+watch(
+  () => props.vm.table.id,
+  () => {
+    confirming.value = false
+  },
+)
 </script>
 
 <template>
@@ -56,6 +80,52 @@ const canUpdate = computed(() => auth.can('orders.update'))
         <p class="mt-2 font-mono text-[11px] text-steel-500">
           Agregar ítems, cobrar, cerrar o cancelar desde el ticket.
         </p>
+
+        <!-- Liberar mesa: cancels the open order (frees the table) for a "nobody ordered" walk-out.
+             One-tap reason so no typing is forced. Distinct from cancelar-comanda inside the ticket. -->
+        <div class="mt-4 border-t border-dashed border-line pt-4">
+          <template v-if="!confirming">
+            <button
+              type="button"
+              class="flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-line bg-surface text-sm font-medium text-steel-600 transition hover:border-alert/40 hover:text-alert focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-alert/30 disabled:cursor-not-allowed disabled:opacity-40"
+              :disabled="!canUpdate || releasing"
+              @click="confirming = true"
+            >
+              <i class="pi pi-inbox text-xs" /> Liberar mesa
+            </button>
+          </template>
+          <template v-else>
+            <p class="mb-2 font-mono text-[11px] uppercase tracking-wide text-steel-500">¿Por qué liberar?</p>
+            <div class="flex flex-col gap-1.5">
+              <button
+                v-for="reason in RELEASE_REASONS"
+                :key="reason"
+                type="button"
+                class="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 text-sm font-medium text-ink transition hover:border-alert/50 hover:text-alert focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-alert/30 disabled:cursor-not-allowed disabled:opacity-40"
+                :disabled="releasing"
+                @click="emit('release', reason)"
+              >
+                {{ reason }}
+                <i class="pi text-xs" :class="releasing ? 'pi-spin pi-spinner' : 'pi-arrow-right'" />
+              </button>
+              <button
+                type="button"
+                class="min-h-9 w-full rounded-lg text-xs font-medium text-steel-500 transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/30"
+                :disabled="releasing"
+                @click="confirming = false"
+              >
+                Cancelar
+              </button>
+            </div>
+          </template>
+          <p
+            v-if="releaseError"
+            role="alert"
+            class="mt-2 rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert"
+          >
+            {{ releaseError }}
+          </p>
+        </div>
       </template>
 
       <!-- Free: open a dine-in order on this table -->

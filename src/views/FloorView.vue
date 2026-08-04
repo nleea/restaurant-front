@@ -1,27 +1,38 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
+import Textarea from 'primevue/textarea'
 import AppShell from '@/components/AppShell.vue'
 import TableCard from '@/components/floor/TableCard.vue'
 import TablePanel from '@/components/floor/TablePanel.vue'
 import RegisterTableModal from '@/components/floor/RegisterTableModal.vue'
-import OrderTicket from '@/components/orders/OrderTicket.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBranchStore } from '@/stores/branch'
 import { useOrdersStore } from '@/stores/orders'
 import { useKitchenStore } from '@/stores/kitchen'
-import { statusOf } from '@/lib/apiError'
+import { detailOf, isConflict, statusOf } from '@/lib/apiError'
 import { formatCOP } from '@/lib/money'
 import { buildTableVMs, occupancyCounts } from '@/lib/floorModel'
 import { buildOrderProgress } from '@/lib/kitchenProgress'
 import { elapsedMinutesFromMs, formatMinutes, heatLevel } from '@/lib/kitchenTime'
+// Called directly, not through `stores/dispatch.ts`, whose write-through refetches the whole
+// delivery history on every mutation (see the change's design).
+import { createDelivery } from '@/services/delivery.api'
 import type { Order, OrderChannel } from '@/services/orders.api'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+
+// Brief notice when a deep-link to /floor/order/:id bounced back (order closed/missing).
+const notice = ref<string | null>(
+  route.query.notice === 'order-unavailable'
+    ? 'Esa comanda ya no está disponible (cerrada, cancelada o inexistente).'
+    : null,
+)
 const branch = useBranchStore()
 const orders = useOrdersStore()
 const kitchen = useKitchenStore()
@@ -63,19 +74,28 @@ async function loadKitchen(branchId: string) {
 // Shared clock for the cooling timers; ticks every 20s, cleared on unmount.
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => {
-  void load()
+
+// The floor refreshes itself while mounted: SSE `orders` events when the stream is healthy,
+// polling as fallback (the store swaps cadences). Re-keyed to the active branch.
+function restartLive() {
+  orders.stopLive()
+  if (branch.activeBranchId) orders.startLive(branch.activeBranchId)
+}
+onMounted(async () => {
+  await load()
+  restartLive()
   timer = setInterval(() => (now.value = Date.now()), 20_000)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  orders.stopLive()
 })
 watch(
   () => branch.activeBranchId,
-  () => {
+  async () => {
     selectedTableId.value = null
-    closeTicket()
-    void load()
+    await load()
+    restartLive()
   },
 )
 
@@ -125,23 +145,58 @@ const selectedVM = computed(
 function toggleSelect(id: string) {
   selectedTableId.value = selectedTableId.value === id ? null : id
   openError.value = null
+  releaseError.value = null
+}
+
+// --- Liberar mesa: cancel the open order (frees the table) with a one-tap reason -----------
+const releasing = ref(false)
+const releaseError = ref<string | null>(null)
+
+async function releaseSelected(reason: string) {
+  const orderId = selectedVM.value?.openOrder?.id
+  if (!orderId || !branch.activeBranchId) return
+  releasing.value = true
+  releaseError.value = null
+  try {
+    // cancelOrder records the reason, cancels, and frees the table (reloads orders + tables).
+    await orders.cancelOrder(branch.activeBranchId, orderId, reason)
+    selectedTableId.value = null
+  } catch (e) {
+    releaseError.value = isConflict(e)
+      ? 'La comanda cambió en el servidor. Recarga el salón.'
+      : (detailOf(e) ?? 'No se pudo liberar la mesa.')
+  } finally {
+    releasing.value = false
+  }
 }
 
 // --- Open an order (shared by the panel and the "Nueva orden" dialog) -------
-const activeOrderId = ref<string | null>(null)
-const activeOrder = computed(() => orders.orders.find((o) => o.id === activeOrderId.value) ?? null)
-const ticketOpen = ref(false)
+// Opening (or viewing) an order navigates to the routed detail — the real Comanda.
 const opening = ref(false)
 const openError = ref<string | null>(null)
 
-async function openOrder(channel: OrderChannel, tableId: string | null): Promise<boolean> {
+function goToOrder(orderId: string) {
+  void router.push(`/floor/order/${orderId}`)
+}
+
+async function openOrder(
+  channel: OrderChannel,
+  tableId: string | null,
+  address?: string,
+): Promise<boolean> {
   if (!branch.activeBranchId) return false
   opening.value = true
   openError.value = null
   try {
     const order = await orders.openOrder(branch.activeBranchId, channel, tableId)
-    activeOrderId.value = order.id
-    ticketOpen.value = true
+    // The address is captured while it is still being heard. Two calls, deliberately not
+    // atomic: if this one fails the order is still genuinely open, and the comanda's
+    // Domicilio card shows the address missing — that is both the signal and the recovery.
+    // No pin is sent; the backend geocodes an approximate one from the address.
+    if (address) {
+      await createDelivery({ order_id: order.id, address_text: address }).catch(() => {})
+    }
+    goToOrder(order.id)
     return true
   } catch (e) {
     openError.value =
@@ -157,28 +212,25 @@ function takeOrderForSelected() {
 }
 function openTicketForSelected() {
   const id = selectedVM.value?.openOrder?.id
-  if (id) {
-    activeOrderId.value = id
-    ticketOpen.value = true
-  }
+  if (id) goToOrder(id)
 }
 function openTicketFor(orderId: string) {
-  activeOrderId.value = orderId
-  ticketOpen.value = true
-}
-function closeTicket() {
-  ticketOpen.value = false
-  activeOrderId.value = null
-}
-function onTicketBack() {
-  closeTicket()
-  selectedTableId.value = null
+  goToOrder(orderId)
 }
 
 // --- "Nueva orden" dialog (channel + free table) ---------------------------
 const newOrderOpen = ref(false)
 const fChannel = ref<OrderChannel>('dine_in')
 const fTableId = ref<string | null>(null)
+const fAddress = ref('')
+
+// The address belongs to whoever is on the phone; `delivery.address` is the narrow code for
+// that, deliberately separate from `delivery.manage` (routes, rings, the business pin).
+// Without it the order still opens — the address is captured later, from the comanda or the
+// dispatch board.
+const canCaptureAddress = computed(() => auth.can('delivery.address'))
+const wantsAddress = computed(() => fChannel.value === 'delivery' && canCaptureAddress.value)
+const newOrderReady = computed(() => !wantsAddress.value || fAddress.value.trim() !== '')
 
 const CHANNELS: { label: string; value: OrderChannel }[] = [
   { label: 'Mesa', value: 'dine_in' },
@@ -194,11 +246,17 @@ const freeTableOptions = computed(() =>
 function openNewOrder() {
   fChannel.value = 'dine_in'
   fTableId.value = null
+  fAddress.value = ''
   openError.value = null
   newOrderOpen.value = true
 }
 async function submitNewOrder() {
-  const ok = await openOrder(fChannel.value, fChannel.value === 'dine_in' ? fTableId.value : null)
+  if (!newOrderReady.value) return
+  const ok = await openOrder(
+    fChannel.value,
+    fChannel.value === 'dine_in' ? fTableId.value : null,
+    wantsAddress.value ? fAddress.value.trim() : undefined,
+  )
   if (ok) newOrderOpen.value = false
 }
 
@@ -272,6 +330,14 @@ function channelLabel(c: string): string {
             <span class="inline-flex items-center gap-1.5 text-ember-600"><span class="size-2 rounded-full bg-ember" />{{ counts.occupied }} ocupadas</span>
           </div>
         </div>
+
+        <!-- Bounce-back notice from a stale deep-link -->
+        <p v-if="notice" class="flex items-center justify-between gap-3 rounded-lg border border-line bg-paper px-3.5 py-2 font-mono text-[11px] text-steel-600">
+          <span>{{ notice }}</span>
+          <button type="button" class="shrink-0 text-steel-400 hover:text-ink" aria-label="Descartar aviso" @click="notice = null">
+            <i class="pi pi-times text-xs" />
+          </button>
+        </p>
 
         <!-- Gating / status messages -->
         <p v-if="loadError" role="alert" class="rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
@@ -348,8 +414,11 @@ function channelLabel(c: string): string {
                 :can-open="orders.hasEmployee"
                 :opening="opening"
                 :open-error="openError"
+                :releasing="releasing"
+                :release-error="releaseError"
                 @take-order="takeOrderForSelected"
                 @open-ticket="openTicketForSelected"
+                @release="releaseSelected"
                 @close="selectedTableId = null"
               />
             </aside>
@@ -406,26 +475,29 @@ function channelLabel(c: string): string {
             fluid
           />
         </div>
+        <!-- Domicilio: the address is captured here, while it is still being heard on the
+             phone, instead of being re-entered later from the dispatch board. -->
+        <div v-if="wantsAddress" class="flex flex-col gap-1.5">
+          <label for="no-address" class="eyebrow">Dirección de entrega</label>
+          <Textarea
+            id="no-address"
+            v-model="fAddress"
+            rows="3"
+            maxlength="255"
+            auto-resize
+            placeholder="Calle 15 #10-20, barrio San Martín, casa de reja verde"
+            fluid
+          />
+          <p class="font-mono text-[11px] text-steel-400">El pin se ubica solo a partir de la dirección.</p>
+        </div>
         <p v-if="openError" role="alert" class="rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-xs text-alert">
           {{ openError }}
         </p>
       </div>
       <template #footer>
         <Button label="Cancelar" severity="secondary" text @click="newOrderOpen = false" />
-        <Button label="Abrir" icon="pi pi-check" :loading="opening" @click="submitNewOrder" />
+        <Button label="Abrir" icon="pi pi-check" :loading="opening" :disabled="!newOrderReady" @click="submitNewOrder" />
       </template>
-    </Dialog>
-
-    <!-- Order ticket (reused) -->
-    <Dialog
-      v-model:visible="ticketOpen"
-      modal
-      :header="activeOrder ? `Comanda · ${channelLabel(activeOrder.channel)}` : 'Comanda'"
-      :style="{ width: '40rem' }"
-      :breakpoints="{ '960px': '95vw' }"
-      @hide="closeTicket"
-    >
-      <OrderTicket v-if="activeOrder" :key="activeOrder.id" :order="activeOrder" @back="onTicketBack" />
     </Dialog>
   </AppShell>
 </template>

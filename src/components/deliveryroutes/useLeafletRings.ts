@@ -7,6 +7,7 @@
 import {
   DELIVERY_POINT_META,
   ringRangeLabel,
+  type DriverMarkerInput,
   type DeliveryPoint,
   type DeliveryRoute,
 } from '@/lib/deliveryRoutes'
@@ -35,6 +36,11 @@ export interface LCircle extends LLayer {
   setLatLng(center: [number, number]): LCircle
   getBounds(): unknown
 }
+export interface LPolyline extends LLayer {
+  setLatLngs(latlngs: [number, number][]): LPolyline
+  setStyle(style: Record<string, unknown>): LPolyline
+  getBounds(): unknown
+}
 export interface LMap {
   setView(center: [number, number], zoom: number): LMap
   flyToBounds(bounds: unknown, options?: Record<string, unknown>): LMap
@@ -49,6 +55,7 @@ export interface LeafletGlobal {
   tileLayer(url: string, options?: Record<string, unknown>): LLayer
   circle(center: [number, number], options: Record<string, unknown>): LCircle
   circleMarker(center: [number, number], options: Record<string, unknown>): LCircle
+  polyline(latlngs: [number, number][], options?: Record<string, unknown>): LPolyline
 }
 
 let leafletPromise: Promise<LeafletGlobal> | null = null
@@ -90,6 +97,12 @@ export interface RingsController {
   centerOn(center: [number, number], zoom?: number): void
   /** Live open-deliveries overlay: one status-colored dot per point (absolute coords). */
   setDeliveryPoints(points: DeliveryPoint[]): void
+  /** Live driver layer: reconcile the full set of active drivers (add/update/remove). */
+  setDriverPositions(drivers: DriverMarkerInput[]): void
+  /** Apply a single driver from a fat position event (no full re-render). */
+  upsertDriver(driver: DriverMarkerInput): void
+  /** Remove a driver's marker + trail (run finished / left the active set). */
+  removeDriver(runId: string): void
   /** Dashed preview ring at the next free band (new-route modal). */
   showPreview(color: string, index: number, stepKm: number): void
   hidePreview(): void
@@ -121,8 +134,62 @@ export async function createRingsMap(
   let businessMarker: LCircle | null = null
   const circles = new Map<string, LCircle>()
   const deliveryDots = new Map<string, LCircle>()
+  const driverMarkers = new Map<string, LCircle>()
+  const driverTrails = new Map<string, LPolyline>()
   let preview: LCircle | null = null
   let pinPreview: LCircle | null = null
+
+  // Driver marker/trail styling: fresh reads "live" with an ember ring + graphite fill (an actor,
+  // not an ember demand drop); stale is muted steel and a dashed, faded trail — never as if live.
+  function driverMarkerStyle(stale: boolean): Record<string, unknown> {
+    return stale
+      ? { radius: 7, color: '#97a0aa', weight: 2, fillColor: '#6b7682', fillOpacity: 0.55 }
+      : { radius: 7, color: '#f2933b', weight: 3, fillColor: '#14181c', fillOpacity: 1 }
+  }
+  function driverTrailStyle(stale: boolean): Record<string, unknown> {
+    return stale
+      ? { color: '#97a0aa', weight: 3, opacity: 0.3, dashArray: '4 6' }
+      : { color: '#14181c', weight: 3, opacity: 0.5 }
+  }
+
+  function renderDriver(driver: DriverMarkerInput): void {
+    // Trail polyline (drawn under the marker) — only when there are ≥ 2 points.
+    let line = driverTrails.get(driver.runId)
+    if (driver.trail.length > 1) {
+      if (!line) {
+        line = leaflet.polyline(driver.trail, driverTrailStyle(driver.stale))
+        line.addTo(map)
+        driverTrails.set(driver.runId, line)
+      } else {
+        line.setLatLngs(driver.trail)
+        line.setStyle(driverTrailStyle(driver.stale))
+      }
+    } else if (line) {
+      line.remove()
+      driverTrails.delete(driver.runId)
+    }
+
+    // Current-position marker with a permanent name + freshness label.
+    const tooltip = `${driver.label} · ${driver.ageLabel}`
+    let marker = driverMarkers.get(driver.runId)
+    if (!marker) {
+      marker = leaflet.circleMarker(driver.coords, driverMarkerStyle(driver.stale))
+      marker.addTo(map)
+      marker.bindTooltip(tooltip, { permanent: true, direction: 'top', offset: [0, -8] })
+      driverMarkers.set(driver.runId, marker)
+    } else {
+      marker.setLatLng(driver.coords)
+      marker.setStyle(driverMarkerStyle(driver.stale))
+      marker.setTooltipContent(tooltip)
+    }
+  }
+
+  function removeDriverLayers(runId: string): void {
+    driverMarkers.get(runId)?.remove()
+    driverMarkers.delete(runId)
+    driverTrails.get(runId)?.remove()
+    driverTrails.delete(runId)
+  }
 
   function styleFor(route: DeliveryRoute, selected: boolean, anySelected: boolean, hidden: boolean) {
     if (hidden) return { opacity: 0, fillOpacity: 0 }
@@ -242,6 +309,25 @@ export async function createRingsMap(
           deliveryDots.delete(id)
         }
       }
+    },
+
+    setDriverPositions(drivers) {
+      const seen = new Set<string>()
+      for (const driver of drivers) {
+        seen.add(driver.runId)
+        renderDriver(driver)
+      }
+      for (const runId of driverMarkers.keys()) {
+        if (!seen.has(runId)) removeDriverLayers(runId)
+      }
+    },
+
+    upsertDriver(driver) {
+      renderDriver(driver)
+    },
+
+    removeDriver(runId) {
+      removeDriverLayers(runId)
     },
 
     showPreview(color, index, stepKm) {

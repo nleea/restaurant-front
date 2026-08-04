@@ -18,7 +18,16 @@ import { useDispatchStore } from '@/stores/dispatch'
 import { useDeliveryStore } from '@/stores/delivery'
 import { useStaffStore } from '@/stores/staff'
 import { useOrdersStore } from '@/stores/orders'
-import { listDrivers, type Delivery, type Run } from '@/services/delivery.api'
+import {
+  blockedReason,
+  isAssignable,
+  listDrivers,
+  reissuePaymentRequest,
+  type Delivery,
+  type Run,
+} from '@/services/delivery.api'
+import { canReissue, emissionBadge, quoteBadge, type QuoteTone } from '@/lib/quoteStatus'
+import { cop } from '@/lib/cop'
 import type { Employee } from '@/services/staff.api'
 import { statusOf } from '@/lib/apiError'
 
@@ -32,6 +41,39 @@ const orders = useOrdersStore()
 const canManage = computed(() => auth.can('delivery.manage'))
 const canAssign = computed(() => auth.can('delivery.assign'))
 
+// --- Cotización y enlace de pago ------------------------------------------------
+// El mismo vocabulario de tono que el resto del tablero: verde/ámbar/rojo no son decoración,
+// son "va bien" / "espera algo" / "alguien tiene que hacer algo".
+const TONE_PILL: Record<QuoteTone, string> = {
+  ok: 'bg-success-50 text-success-700',
+  waiting: 'bg-warn/10 text-warn',
+  blocked: 'bg-alert-50 text-alert-700',
+}
+const tonePill = (tone: QuoteTone) => TONE_PILL[tone]
+
+const reissuing = ref(false)
+const reissueNote = ref<string | null>(null)
+
+/** Reemite el enlace de pago. Acuña uno NUEVO: del anterior sólo se guardó el hash. */
+async function reissue(delivery: Delivery) {
+  reissuing.value = true
+  reissueNote.value = null
+  try {
+    const result = await reissuePaymentRequest(delivery.id)
+    // Se dice lo que pasó DE VERDAD. Un "enviado" cuando el puente falló manda al despachador
+    // a esperar un mensaje que no existe, y el cliente nunca sabe cuánto debe.
+    reissueNote.value =
+      result.emission_status === 'sent'
+        ? 'Enlace nuevo enviado por WhatsApp.'
+        : (result.emission_failure_reason ?? 'No se pudo enviar; pásale el enlace a mano.')
+    if (branch.activeBranchId) await dispatch.loadDeliveries(branch.activeBranchId)
+  } catch {
+    reissueNote.value = 'No se pudo reenviar el enlace de pago.'
+  } finally {
+    reissuing.value = false
+  }
+}
+
 // --- Load --------------------------------------------------------------------
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -44,8 +86,8 @@ async function load() {
     await branch.ensureLoaded()
     const branchId = branch.activeBranchId ?? undefined
     await Promise.all([
-      dispatch.loadDeliveries(),
-      dispatch.loadRuns(),
+      branchId ? dispatch.loadDeliveries(branchId) : Promise.resolve(),
+      branchId ? dispatch.loadRuns(branchId) : Promise.resolve(),
       branchId ? delivery.loadRoutes(branchId) : Promise.resolve(),
       branchId ? delivery.loadSettings(branchId) : Promise.resolve(),
       staff.ensureLoaded({ branchId, active: true }),
@@ -59,13 +101,23 @@ async function load() {
     loading.value = false
   }
 }
-onMounted(load)
+// The board refreshes itself while mounted: SSE `delivery` events when the stream is healthy,
+// polling as fallback (the store swaps cadences). Re-keyed to the active branch.
+function restartLive() {
+  dispatch.stopLive()
+  if (branch.activeBranchId) dispatch.startLive(branch.activeBranchId)
+}
+onMounted(async () => {
+  await load()
+  restartLive()
+})
 watch(
   () => branch.activeBranchId,
-  () => {
+  async () => {
     selectedDeliveryId.value = null
     selectedRunId.value = null
-    void load()
+    await load()
+    restartLive()
   },
 )
 
@@ -74,7 +126,10 @@ const now = ref(Date.now())
 const tick = setInterval(() => {
   now.value = Date.now()
 }, 30_000)
-onBeforeUnmount(() => clearInterval(tick))
+onBeforeUnmount(() => {
+  clearInterval(tick)
+  dispatch.stopLive()
+})
 
 function fmtTime(iso: string | null | undefined): string {
   if (!iso) return '—'
@@ -102,6 +157,10 @@ const DELIVERY_STATUS: Record<string, { label: string; pill: string; dot: string
   in_transit: { label: 'En ruta', pill: 'pill-info', dot: 'bg-info' },
   delivered: { label: 'Entregado', pill: 'pill-success', dot: 'bg-success' },
   not_delivered: { label: 'No entregado', pill: 'pill-alert', dot: 'bg-alert' },
+  // Su comanda se canceló y nunca salió. Fuera del tablero (ver `filteredDeliveries`), pero la
+  // etiqueta existe igual: cualquier otra superficie que pinte un estado suelto —una búsqueda,
+  // un detalle abierto de antes— mostraría si no el literal crudo.
+  cancelled: { label: 'Cancelado', pill: 'pill-neutral', dot: 'bg-steel-400' },
 }
 const RUN_STATUS: Record<string, { label: string; pill: string; dot: string }> = {
   preparing: { label: 'Preparando', pill: 'pill-warn', dot: 'bg-warn' },
@@ -245,6 +304,11 @@ function deliveryMatchesDriver(d: Delivery): boolean {
 const filteredDeliveries = computed(() => {
   const q = query.value.trim().toLowerCase()
   const list = dispatch.deliveries.filter((d) => {
+    // El tablero es una LISTA DE TRABAJO: lo que está aquí es algo que alguien tiene que hacer.
+    // Una entrega cancelada no le pide nada a nadie, así que quedarse —aunque fuera en gris— la
+    // convertiría en ruido que hay que aprender a ignorar, y un tablero que se ignora a trozos
+    // se ignora entero. Sigue existiendo con su estado para quien la busque.
+    if (d.delivery_status === 'cancelled') return false
     if (deliveryStatusSel.size && !deliveryStatusSel.has(d.delivery_status)) return false
     if (routeSel.size && (!d.delivery_route_id || !routeSel.has(d.delivery_route_id))) return false
     if (!deliveryMatchesDriver(d)) return false
@@ -732,6 +796,12 @@ async function addToRun() {
             <span v-if="lastRefresh" class="font-mono text-[11px] text-steel-500">
               Última actualización · {{ fmtTime(lastRefresh.toISOString()) }}
             </span>
+            <RouterLink
+              to="/delivery"
+              class="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-wide text-steel-600 transition hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40"
+            >
+              <i class="pi pi-map text-[10px]" /> Mapa de cobertura
+            </RouterLink>
             <Button
               label="Actualizar"
               size="small"
@@ -743,6 +813,21 @@ async function addToRun() {
             />
           </div>
         </header>
+
+        <!-- ── Caja cerrada: no open shift, so the board is empty by design ───── -->
+        <div
+          v-if="!dispatch.cashSessionOpen"
+          class="flex items-center gap-3 rounded-xl border border-ember/30 bg-ember/5 px-4 py-3"
+        >
+          <i class="pi pi-lock text-ember" />
+          <div class="min-w-0">
+            <p class="font-semibold text-ink">Caja cerrada</p>
+            <p class="text-sm text-steel-500">
+              No hay un turno abierto en esta sucursal. Abre la caja para recibir y despachar
+              domicilios; los del turno anterior quedan en los registros.
+            </p>
+          </div>
+        </div>
 
         <!-- ── Tabs + filter toggle ─────────────────────────────────────────── -->
         <div class="flex items-center justify-between gap-2">
@@ -1158,10 +1243,86 @@ async function addToRun() {
                 </li>
               </ol>
 
+              <!-- El dinero del domicilio: cotización y enlace de pago. Va ANTES de las
+                   acciones porque manda sobre ellas — sin cotización no hay cobro y sin cobro
+                   no hay cocina, así que un despachador que mira "por qué no sale" empieza
+                   aquí y no en el botón. -->
+              <section class="mt-5 rounded-lg border border-line bg-sunken/40 px-3 py-2.5" data-quote-block>
+                <div class="flex items-center justify-between gap-2">
+                  <p class="font-mono text-[10px] uppercase tracking-[0.14em] text-steel-500">
+                    Domicilio
+                  </p>
+                  <span class="pill shrink-0" :class="tonePill(quoteBadge(selectedDelivery).tone)">
+                    {{ quoteBadge(selectedDelivery).label }}
+                  </span>
+                </div>
+                <p
+                  v-if="selectedDelivery.quote_status === 'quoted'"
+                  class="mt-1.5 font-mono text-sm tabular-nums text-ink"
+                >
+                  {{ cop(Number(selectedDelivery.quoted_fee ?? 0)) }}
+                  <span class="text-[11px] text-steel-500">
+                    · {{ selectedDelivery.quote_distance_km }} km
+                  </span>
+                </p>
+                <p v-if="quoteBadge(selectedDelivery).detail" class="mt-1 text-xs text-muted">
+                  {{ quoteBadge(selectedDelivery).detail }}
+                </p>
+
+                <template v-if="emissionBadge(selectedDelivery)">
+                  <div class="mt-2.5 flex items-center justify-between gap-2 border-t border-line pt-2.5">
+                    <p class="font-mono text-[10px] uppercase tracking-[0.14em] text-steel-500">
+                      Enlace de pago
+                    </p>
+                    <span class="pill shrink-0" :class="tonePill(emissionBadge(selectedDelivery)!.tone)">
+                      {{ emissionBadge(selectedDelivery)!.label }}
+                    </span>
+                  </div>
+                  <p v-if="emissionBadge(selectedDelivery)!.detail" class="mt-1 text-xs text-muted">
+                    {{ emissionBadge(selectedDelivery)!.detail }}
+                  </p>
+                  <!-- Reemitir, no reenviar: del enlace anterior sólo se guardó su hash, así que
+                       no existe en ninguna parte. Esto acuña uno nuevo sobre la MISMA cotización
+                       —el cliente ve el mismo total— e invalida el anterior. -->
+                  <Button
+                    v-if="canAssign && canReissue(selectedDelivery)"
+                    class="mt-2"
+                    label="Reenviar enlace de pago"
+                    icon="pi pi-whatsapp"
+                    size="small"
+                    severity="secondary"
+                    outlined
+                    fluid
+                    :loading="reissuing"
+                    data-reissue
+                    @click="reissue(selectedDelivery)"
+                  />
+                  <p v-if="reissueNote" class="mt-1.5 text-xs text-muted">{{ reissueNote }}</p>
+                </template>
+              </section>
+
               <!-- Actions -->
               <div v-if="canAssign" class="mt-5 flex flex-col gap-2">
+                <!-- No se despacha lo que la cocina no ha terminado. Se dice el motivo en
+                     vez de dejar un botón muerto: un control deshabilitado sin explicación
+                     se lee como "la app está rota". -->
+                <div
+                  v-if="
+                    selectedDelivery.delivery_status === 'pending' &&
+                    !isAssignable(selectedDelivery)
+                  "
+                  class="rounded-lg border border-warn/40 bg-warn/5 px-3 py-2.5"
+                  data-kitchen-block
+                >
+                  <p class="font-mono text-[10px] uppercase tracking-[0.14em] text-warn">
+                    Aún no se puede despachar
+                  </p>
+                  <p class="mt-1 text-xs text-muted">
+                    {{ blockedReason(selectedDelivery) }}.
+                  </p>
+                </div>
                 <Button
-                  v-if="selectedDelivery.delivery_status === 'pending'"
+                  v-else-if="selectedDelivery.delivery_status === 'pending'"
                   label="Asignar a despacho"
                   icon="pi pi-send"
                   size="small"

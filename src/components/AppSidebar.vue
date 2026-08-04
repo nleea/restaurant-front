@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useAlertsStore } from '@/stores/alerts'
 import { useAuthStore } from '@/stores/auth'
+import { useBranchStore } from '@/stores/branch'
 import BranchSelector from '@/components/BranchSelector.vue'
 
 // "El riel del pase": the authenticated nav echoes the login's dark pass (bg-pass) while the
@@ -13,6 +15,31 @@ const emit = defineEmits<{ close: [] }>()
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+const alerts = useAlertsStore()
+const branch = useBranchStore()
+
+// El contador vive en el RIEL, no en la pantalla de alertas.
+//
+// Es la diferencia entre un módulo que avisa y uno que hay que ir a consultar: quien está en
+// Caja o en Cocina tiene que enterarse de que falta tomate sin abrir nada. Por eso el riel
+// —que está siempre— es quien mantiene viva la suscripción, y no la vista.
+const canSeeAlerts = computed(() => auth.can('alerts.read'))
+const alertCount = computed(() => (canSeeAlerts.value ? alerts.unacknowledgedCount : 0))
+
+watch(
+  [canSeeAlerts, () => branch.activeBranchId],
+  ([allowed, branchId]) => {
+    if (!allowed || !branchId) {
+      alerts.stopLive()
+      return
+    }
+    void alerts.load(branchId)
+    alerts.startLive(branchId)
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => alerts.stopLive())
 
 interface NavLink {
   to: string
@@ -20,6 +47,8 @@ interface NavLink {
   icon: string
   /** Omit to make the link visible to any authenticated user (e.g. self-service). */
   permission?: string
+  /** Marks the link that carries the unattended-alerts count. */
+  badge?: 'alerts'
 }
 
 interface NavGroup {
@@ -43,6 +72,8 @@ const navGroups: NavGroup[] = [
       { to: '/cash', label: 'Caja', icon: 'pi-wallet', permission: 'cash.read' },
       { to: '/delivery', label: 'Domicilios', icon: 'pi-send', permission: 'delivery.read' },
       { to: '/dispatch', label: 'Despacho', icon: 'pi-map-marker', permission: 'delivery.read' },
+      { to: '/driver', label: 'Domiciliario', icon: 'pi-send', permission: 'delivery.drive' },
+      { to: '/whatsapp', label: 'WhatsApp', icon: 'pi-comments', permission: 'messaging.read' },
     ],
   },
   {
@@ -56,6 +87,7 @@ const navGroups: NavGroup[] = [
     title: 'Carta',
     links: [
       { to: '/menu', label: 'Carta', icon: 'pi-book', permission: 'menu.read' },
+      { to: '/menu/appearance', label: 'Apariencia', icon: 'pi-palette', permission: 'menu.manage' },
       { to: '/catalog', label: 'Catálogo', icon: 'pi-database', permission: 'catalog.read' },
     ],
   },
@@ -66,6 +98,27 @@ const navGroups: NavGroup[] = [
       { to: '/customers', label: 'Clientes', icon: 'pi-id-card', permission: 'customers.read' },
       { to: '/staff', label: 'Personal', icon: 'pi-users', permission: 'staff.read' },
       { to: '/shifts', label: 'Turnos', icon: 'pi-calendar', permission: 'staff.read' },
+      { to: '/business', label: 'Negocio', icon: 'pi-building', permission: 'menu.manage' },
+      {
+        to: '/whatsapp/sessions',
+        label: 'Números WhatsApp',
+        icon: 'pi-mobile',
+        permission: 'messaging.manage',
+      },
+      {
+        to: '/whatsapp/autoreply',
+        label: 'Respuestas automáticas',
+        icon: 'pi-bolt',
+        permission: 'messaging.manage',
+      },
+      { to: '/alerts', label: 'Alertas', icon: 'pi-bell', permission: 'alerts.read', badge: 'alerts' },
+      { to: '/assistant', label: 'Asistente', icon: 'pi-sparkles', permission: 'assistant.use' },
+      {
+        to: '/assistant/usage',
+        label: 'Consumo del asistente',
+        icon: 'pi-gauge',
+        permission: 'assistant.manage',
+      },
       { to: '/audit', label: 'Auditoría', icon: 'pi-history', permission: 'audit.read' },
       { to: '/rbac', label: 'Accesos', icon: 'pi-shield', permission: 'rbac.manage' },
     ],
@@ -165,6 +218,16 @@ function onLogout() {
             :style="isActive(link.to) ? 'color: var(--color-ember)' : undefined"
           />
           <span class="font-mono text-[12px] uppercase tracking-[0.14em]">{{ link.label }}</span>
+          <!-- Lo que nadie ha tomado. Desaparece al tomarlo, no al leerlo: un contador que
+               se apaga por mirarlo no dice nada. -->
+          <span
+            v-if="link.badge === 'alerts' && alertCount > 0"
+            class="ml-auto grid min-w-5 place-items-center rounded-full bg-alert px-1.5 py-0.5 font-mono text-[10px] font-bold tabular-nums text-white"
+            data-testid="alerts-badge"
+            :aria-label="`${alertCount} alertas sin atender`"
+          >
+            {{ alertCount }}
+          </span>
         </RouterLink>
       </div>
     </nav>
