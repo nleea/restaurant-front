@@ -14,14 +14,17 @@ import { useAuthStore } from '@/stores/auth'
 import { useBranchStore } from '@/stores/branch'
 import { useCatalogStore } from '@/stores/catalog'
 import { useInventoryStore, type StockRow } from '@/stores/inventory'
+import { useKitchenStore } from '@/stores/kitchen'
 import { useStaffStore } from '@/stores/staff'
 import { statusOf as httpStatusOf } from '@/lib/apiError'
+import { deriveStationMeta } from '@/lib/kds/stations'
 import type { Employee } from '@/services/staff.api'
 
 const auth = useAuthStore()
 const branch = useBranchStore()
 const catalog = useCatalogStore()
 const inventory = useInventoryStore()
+const kitchen = useKitchenStore()
 const staff = useStaffStore()
 
 const canAdjust = computed(() => auth.can('inventory.adjust'))
@@ -41,6 +44,9 @@ async function load() {
     await Promise.all([
       inventory.loadBranch(branchId),
       staff.ensureLoaded({ branchId, active: true }),
+      // Las estaciones de la sede alimentan el selector del editor de insumos. Best-effort:
+      // sin permiso de cocina el selector sale vacío y el insumo se guarda igual.
+      kitchen.loadStations(branchId).catch(() => undefined),
     ])
   } catch {
     error.value = 'No se pudo cargar el inventario.'
@@ -396,6 +402,7 @@ const pmEditingId = ref<string | null>(null)
 const pName = ref('')
 const pCategory = ref('')
 const pUnitId = ref<string | null>(null)
+const pStationId = ref<string | null>(null)
 const pStock = ref<number | null>(null)
 const pMin = ref<number | null>(null)
 const pEmployee = ref<string | null>(null)
@@ -405,12 +412,21 @@ const pmPartial = ref<string | null>(null)
 const unitOptions = computed(() =>
   catalog.units.map((u) => ({ label: `${u.name} (${u.abbreviation})`, value: u.id })),
 )
+// El tag de dos letras sale de `deriveStationMeta`, el mismo del rail del KDS: una estación se
+// llama igual en toda la app. Mono a propósito — el color queda para el calor y el estado.
+const stationOptions = computed(() =>
+  deriveStationMeta(kitchen.stations.filter((s) => s.is_active)).map((m) => ({
+    label: `${m.tag} · ${m.label}`,
+    value: m.id,
+  })),
+)
 function openNewInsumo() {
   pmEditingId.value = null
   pmStep.value = 1
   pName.value = ''
   pCategory.value = ''
   pUnitId.value = null
+  pStationId.value = null
   pStock.value = null
   pMin.value = null
   pEmployee.value = employeeOptions.value.length === 1 ? (employeeOptions.value[0]?.value ?? null) : null
@@ -425,6 +441,7 @@ function openEditInsumo(r: StockRow) {
   pName.value = r.name
   pCategory.value = r.category ?? ''
   pUnitId.value = info?.unitId ?? null
+  pStationId.value = info?.defaultStationId ?? null
   pmError.value = null
   pmPartial.value = null
   pmOpen.value = true
@@ -444,6 +461,9 @@ async function saveInsumo() {
         name: pName.value.trim(),
         category: pCategory.value.trim() || null,
         unit_of_measure_id: pUnitId.value,
+        // Siempre explícito: null limpia la estación, que es lo que hace el botón de borrar
+        // del selector. Omitir la clave la dejaría intacta y el borrado no haría nada.
+        default_station_id: pStationId.value,
       })
       pmOpen.value = false
     } else {
@@ -451,6 +471,7 @@ async function saveInsumo() {
         name: pName.value.trim(),
         category: pCategory.value.trim() || null,
         unitOfMeasureId: pUnitId.value,
+        defaultStationId: pStationId.value,
         initialQuantity: pStock.value !== null && pStock.value > 0 ? String(pStock.value) : null,
         minStock: pMin.value !== null && pMin.value >= 0 ? String(pMin.value) : null,
         employeeId: pEmployee.value,
@@ -1258,6 +1279,29 @@ const lowOnlyRows = computed(() => inventory.rows.filter((r) => r.low && !r.out)
             <label class="font-mono text-[10px] uppercase tracking-[0.14em] text-steel-500">Unidad de medida *</label>
             <Select v-model="pUnitId" :options="unitOptions" option-label="label" option-value="value" placeholder="Elige" size="small" fluid />
           </div>
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="font-mono text-[10px] uppercase tracking-[0.14em] text-steel-500">
+            Estación de cocina
+          </label>
+          <Select
+            v-model="pStationId"
+            :options="stationOptions"
+            option-label="label"
+            option-value="value"
+            placeholder="Sin estación"
+            size="small"
+            show-clear
+            fluid
+          />
+          <p v-if="!stationOptions.length" class="text-[11px] leading-snug text-steel-500">
+            Esta sucursal aún no tiene estaciones. Créalas en Cocina › Configuración; el insumo
+            se guarda igual sin estación.
+          </p>
+          <p v-else class="text-[11px] leading-snug text-steel-500">
+            Dónde se trabaja este insumo. Es lo que permite a Cocina derivar de la receta qué
+            estación prepara cada plato.
+          </p>
         </div>
       </div>
 

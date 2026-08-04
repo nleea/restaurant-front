@@ -104,16 +104,33 @@ without falling back to Excel or paper.
 
 Run the API locally with `cd ../backend && poetry run uvicorn restaurante.main:app --reload`
 (serves on `http://localhost:8000`). Seed data: `poetry run python -m scripts.seed` creates
-tenant slug `demo` with `admin@demo.com` / `admin1234`. `GET /health` is the liveness check.
+tenant slug `demo` with `admin@demo.com` / `admin1234`. `GET /api/health` is the liveness
+check.
+
+### Every API route lives under `/api`, on the SAME origin as the app
+
+`baseURL` is the relative string `/api` — never an absolute host. In dev Vite proxies
+`/api` to `:8000` (with `changeOrigin: false`, see below); deployed, the Cloudflare tunnel
+routes `/api/*` to the backend and everything else to the app.
+
+The prefix is not decoration. The app and its API must share a hostname (next section), and
+sharing one without a prefix is impossible: fourteen SPA routes (`/menu`, `/orders`,
+`/inventory`, `/cash`, `/staff`, …) are named exactly like fourteen API prefixes. Being
+relative is also what makes it multi-tenant for free — at `demo.wsquote.uk` requests go to
+`demo.wsquote.uk`, at `otro.wsquote.uk` to `otro.wsquote.uk`. `VITE_API_BASE_URL` still
+overrides it, but an absolute value is one host for every tenant, so set it only if you have
+solved that yourself.
 
 ### Tenancy is resolved by subdomain — not a header you set in JSON
 
 Every request's tenant is derived from the **Host subdomain**: `<slug>.<BASE_DOMAIN>`, where
 `BASE_DOMAIN=localhost` in dev. `*.localhost` resolves to `127.0.0.1` in the browser without
-touching `/etc/hosts`. So the frontend must call the API at the **tenant subdomain host**,
-e.g. `http://demo.localhost:8000/...`, and ideally run the dev server at `demo.localhost`
-too. There is no `tenant_id` field in request bodies — getting the host wrong means the wrong
-(or no) tenant. This is the single most common integration mistake.
+touching `/etc/hosts`. So run the dev server at `demo.localhost:5173` and let the proxy carry
+the Host through — **never set `changeOrigin: true`** on the `/api` proxy, it would rewrite
+the Host to `localhost`, strip the subdomain, and 400 every request. `BASE_DOMAIN` takes no
+wildcard (`*.wsquote.uk` matches nothing; it is string concatenation, not a glob). There is
+no `tenant_id` field in request bodies — getting the host wrong means the wrong (or no)
+tenant. This is the single most common integration mistake.
 
 ### Auth flow (JWT access + refresh)
 
