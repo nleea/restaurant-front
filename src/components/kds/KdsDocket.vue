@@ -96,7 +96,24 @@ function fmtTime(ts: number): string {
           <span class="text-[15px] leading-none">{{ typeIcon }}</span>
           <h3 class="truncate font-display text-lg font-extrabold leading-tight text-ink">{{ heading }}</h3>
         </div>
-        <span v-if="order.guests > 0" class="font-mono text-[11px] tabular-nums text-steel-500">{{ order.guests }} pax</span>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span v-if="order.guests > 0" class="font-mono text-[11px] tabular-nums text-steel-500">{{ order.guests }} pax</span>
+          <!-- Sin mesero, el nombre es lo único que dice de quién es el plato que sale. -->
+          <span v-if="order.diner" class="truncate text-[11px] font-medium text-ink" data-testid="docket-diner">
+            {{ order.diner }}
+          </span>
+          <!-- Sello mono, no de color: el color de este tablero es del calor y del estado, y de
+               dónde viene un pedido no es ninguno de los dos. Dice lo único que un cocinero no
+               puede deducir de nada más en la chit: nadie del negocio lo revisó. -->
+          <span
+            v-if="order.selfOrdered"
+            class="rounded border border-line px-1 font-mono text-[10px] font-bold uppercase tracking-wide text-steel-500"
+            title="El cliente pidió desde el QR de su mesa"
+            data-testid="docket-qr-mark"
+          >
+            QR
+          </span>
+        </div>
       </div>
 
       <div v-if="severity !== 'none'" class="flex shrink-0 items-center gap-1.5 self-center">

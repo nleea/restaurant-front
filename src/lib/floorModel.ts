@@ -9,20 +9,36 @@ export const OPEN_ORDER_STATUS = 'open'
 
 export interface TableVM {
   table: DiningTable
+  /**
+   * La PRIMERA comanda abierta de la mesa. Se conserva porque el panel de detalle sigue
+   * trabajando sobre una sola, pero desde el pedido por QR una mesa puede sostener varias:
+   * para contar, sumar o nombrar comensales hay que usar `openOrders`.
+   */
   openOrder: Order | null
+  /** Todas las comandas abiertas de la mesa. Una por comensal cuando piden por el QR. */
+  openOrders: Order[]
   isOccupied: boolean
-  /** Server total of the open order (numeric), or 0 when free. */
+  /**
+   * Suma de TODAS las comandas abiertas de la mesa.
+   *
+   * Antes leía sólo la primera, que era correcto cuando una mesa sostenía una comanda. Con
+   * varias, la tarjeta decía la cuenta de un comensal y el cajero cobraba otra cosa.
+   */
   total: number
+  /** Los comensales que la mesa sostiene, para poder nombrarlos en la tarjeta. */
+  dinerNames: string[]
   /** Kitchen rollup state of the backing order (`none` when free/unrouted). */
   kitchenState: KitchenState
   /** Client-derived ticket progress for the backing order, or null when kitchen data isn't loaded. */
   progress: OrderProgress | null
 }
 
+export function openOrdersForTable(orders: Order[], tableId: string): Order[] {
+  return orders.filter((o) => o.dining_table_id === tableId && o.status === OPEN_ORDER_STATUS)
+}
+
 export function openOrderForTable(orders: Order[], tableId: string): Order | null {
-  return (
-    orders.find((o) => o.dining_table_id === tableId && o.status === OPEN_ORDER_STATUS) ?? null
-  )
+  return openOrdersForTable(orders, tableId)[0] ?? null
 }
 
 /**
@@ -38,12 +54,17 @@ export function buildTableVMs(
   return tables
     .filter((t) => t.is_active)
     .map((t): TableVM => {
-      const openOrder = openOrderForTable(orders, t.id)
+      const openOrders = openOrdersForTable(orders, t.id)
+      const openOrder = openOrders[0] ?? null
       return {
         table: t,
         openOrder,
-        isOccupied: openOrder !== null,
-        total: openOrder ? Number(openOrder.total) : 0,
+        openOrders,
+        isOccupied: openOrders.length > 0,
+        total: openOrders.reduce((sum, o) => sum + Number(o.total), 0),
+        dinerNames: openOrders
+          .map((o) => o.diner_name)
+          .filter((name): name is string => !!name),
         kitchenState: openOrder?.kitchen_state ?? 'none',
         progress: openOrder ? (progressByOrder[openOrder.id] ?? null) : null,
       }

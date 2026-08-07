@@ -35,6 +35,17 @@ const router = createRouter({
     },
     { path: '/', redirect: { name: 'rbac' } },
     {
+      // Pedir desde la mesa escaneando su QR. Sede y mesa son SEGMENTOS de ruta porque eso es
+      // exactamente lo que la calcomanía lleva impreso, y porque un pedido no puede contradecir
+      // la carta que el comensal estuvo mirando. Declarada ANTES de `/store/:branchCode?` para
+      // que "tables" no se coma nunca el segmento de la sede.
+      // Pública sin condiciones: quien la abre está sentado en una mesa, no logueado.
+      path: '/store/:branchCode/table/:tableCode',
+      name: 'tableOrder',
+      component: () => import('@/views/TableOrderView.vue'),
+      meta: { public: true },
+    },
+    {
       // Public customer storefront: browse the carta + place an order. No auth (reached via QR/link);
       // consumes the tenant's appearance config and wears its theme.
       // `:branchCode?` addresses one branch (branches.code) — the link a customer is handed over
@@ -63,6 +74,16 @@ const router = createRouter({
       path: '/floor',
       name: 'floor',
       component: () => import('@/views/FloorView.vue'),
+      meta: { requiresAuth: true, permission: 'orders.read' },
+    },
+    {
+      // La hoja imprimible con el QR de cada mesa. Vive junto al Salón porque es quien conoce
+      // las mesas, y detrás del mismo permiso de lectura: el código de una mesa no es un
+      // secreto —va impreso a la vista de cualquiera que entre—, así que lo que se protege es
+      // el panel, no el dato.
+      path: '/floor/qr',
+      name: 'tableQr',
+      component: () => import('@/views/TableQrSheetView.vue'),
       meta: { requiresAuth: true, permission: 'orders.read' },
     },
     {
@@ -144,6 +165,15 @@ const router = createRouter({
       name: 'cash',
       component: () => import('@/views/CashStationView.vue'),
       meta: { requiresAuth: true, permission: 'cash.read' },
+    },
+    {
+      // Cobrar una mesa: agrupar sus comandas y liquidarlas en un gesto. Vive bajo Caja porque
+      // es quien cobra, y detrás de `orders.pay` — la misma autoridad que cobrar una comanda
+      // suelta, que es exactamente lo que hace, sobre varias a la vez.
+      path: '/cash/tables',
+      name: 'tableSettlement',
+      component: () => import('@/views/TableSettlementView.vue'),
+      meta: { requiresAuth: true, permission: 'orders.pay' },
     },
     // The redesign used to live at /cash/station; keep the old path working.
     { path: '/cash/station', redirect: { name: 'cash' } },

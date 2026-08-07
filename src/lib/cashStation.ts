@@ -35,6 +35,13 @@ export interface Movement {
   detail: string
   person?: string
   method?: PayMethod
+  /**
+   * La cuenta de mesa que produjo este movimiento, cuando la hubo.
+   *
+   * Cobrar la mesa 5 con un billete deja un movimiento por comanda: para el arqueo es la misma
+   * plata, pero el cajero hizo UN gesto y sin esto vería tres cobros donde hizo uno.
+   */
+  billId?: string
   fresh?: boolean // just printed → slide-in + flash highlight
 }
 
@@ -124,6 +131,9 @@ function toDisplayMovement(m: CashMovement, fresh: boolean): Movement {
     detail: m.method ? methodLabel(m.method) : '',
     person: undefined,
     method: (m.method as PayMethod) || undefined,
+    // Cobrar una mesa deja UN movimiento por comanda: para el arqueo es la misma plata, pero
+    // el cajero hizo un solo gesto y vería tres cobros donde hizo uno. Esto los ata.
+    billId: m.table_bill_id ?? undefined,
     fresh,
   }
 }

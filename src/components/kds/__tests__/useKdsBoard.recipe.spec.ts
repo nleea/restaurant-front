@@ -35,7 +35,7 @@ function seedBoard(variantId: string | null): void {
       quantity: 1,
       orderId: 'o1',
       channel: 'dine_in',
-      tableNumber: '4',
+      tableNumber: '4', dinerName: null, origin: null,
       variantId,
     },
   }

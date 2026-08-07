@@ -33,6 +33,8 @@ const info = (partial: Partial<ItemInfo> = {}): ItemInfo => ({
   quantity: 2,
   orderId: 'o1',
   channel: 'dine_in',
+  dinerName: null,
+  origin: null,
   tableNumber: '4',
   variantId: 'v1',
   ...partial,
@@ -215,5 +217,40 @@ describe('adaptTickets — dish components from ticket grouping', () => {
       NOW,
     )
     expect(o?.items[0]?.components[0]?.waitMin).toBe(5)
+  })
+})
+
+describe('adaptTickets — de dónde viene el pedido y de quién es el plato', () => {
+  it('lleva el comensal y el sello de autopedido a la chit', () => {
+    // Sin mesero, quien saca el plato sólo tiene la chit para saber a dónde va y de quién es.
+    const [o] = adaptTickets(
+      [ticket({ id: 't1' })],
+      { i1: info({ dinerName: 'Ana', origin: 'qr', tableNumber: '5' }) },
+      META,
+      NOW,
+    )
+
+    expect(o?.diner).toBe('Ana')
+    expect(o?.selfOrdered).toBe(true)
+    expect(o?.table).toBe('5')
+  })
+
+  it('una comanda que abrió el personal no lleva el sello', () => {
+    const [o] = adaptTickets(
+      [ticket({ id: 't1' })],
+      { i1: info({ dinerName: null, origin: 'staff' }) },
+      META,
+      NOW,
+    )
+
+    expect(o?.selfOrdered).toBe(false)
+    expect(o?.diner).toBe('')
+  })
+
+  it('un pedido que no resuelve degrada sin inventarse nada', () => {
+    const [o] = adaptTickets([ticket({ id: 't1' })], {}, META, NOW)
+
+    expect(o?.diner).toBe('')
+    expect(o?.selfOrdered).toBe(false)
   })
 })

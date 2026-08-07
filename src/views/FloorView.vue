@@ -229,6 +229,9 @@ const fAddress = ref('')
 // Without it the order still opens — the address is captured later, from the comanda or the
 // dispatch board.
 const canCaptureAddress = computed(() => auth.can('delivery.address'))
+// Sin meseros, quien nota que la mesa 5 terminó no es necesariamente quien está en la caja.
+// El camino de "lo veo" a "lo cobro" tiene que ser una acción, no volver a buscar la mesa.
+const canCharge = computed(() => auth.can('orders.pay'))
 const wantsAddress = computed(() => fChannel.value === 'delivery' && canCaptureAddress.value)
 const newOrderReady = computed(() => !wantsAddress.value || fAddress.value.trim() !== '')
 
@@ -308,6 +311,23 @@ function channelLabel(c: string): string {
               </p>
             </div>
           </div>
+          <RouterLink
+            v-if="canCharge"
+            :to="{ name: 'tableSettlement' }"
+            class="mt-0.5 inline-flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2 text-sm font-medium text-steel-500 transition hover:border-ember/50 hover:text-ink"
+            data-testid="settle-tables-link"
+          >
+            <i class="pi pi-wallet text-xs" />Cobrar una mesa
+          </RouterLink>
+          <!-- La hoja de QR vive aquí porque el Salón es quien conoce las mesas: quien acaba de
+               crear la mesa 9 es quien necesita su calcomanía. -->
+          <RouterLink
+            :to="{ name: 'tableQr' }"
+            class="mt-0.5 inline-flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2 text-sm font-medium text-steel-500 transition hover:border-ember/50 hover:text-ink"
+            data-testid="table-qr-link"
+          >
+            <i class="pi pi-qrcode text-xs" />QR de las mesas
+          </RouterLink>
         </header>
 
         <!-- Actions + status summary -->

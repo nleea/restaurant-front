@@ -20,9 +20,17 @@ export interface DiningTable {
   id: string
   branch_id: string
   number: string
+  /** El código impreso en el QR de la mesa. Lo acuña el sistema y no cambia nunca. */
+  code: string | null
   capacity: number
   status: string
   is_active: boolean
+}
+
+/** El QR de una mesa y —a la vista— la dirección que codifica. */
+export interface TableQr {
+  url: string
+  svg: string
 }
 
 export interface Order {
@@ -35,6 +43,10 @@ export interface Order {
   discount: string
   total: string
   dining_table_id: string | null
+  /** Nombre de pila de quien pidió por el QR de su mesa. Nulo en toda comanda de mostrador. */
+  diner_name: string | null
+  /** De dónde vino: `staff` (la abrió una persona del negocio), `web` o `qr`. */
+  origin: string
   customer_id: string | null
   whatsapp_contact_id: string | null
   closed_at: string | null
@@ -101,6 +113,119 @@ export async function getMyEmployee(): Promise<Employee> {
 export async function listTables(branchId: string): Promise<DiningTable[]> {
   return (await http.get<DiningTable[]>('/orders/tables', { params: { branch_id: branchId } }))
     .data
+}
+
+// --- Cuenta de mesa (cobrar varias comandas en un gesto) -------------------------------------
+export interface TableBillMember {
+  order_id: string
+  /** La etiqueta corta que el mostrador dice en voz alta. Con dos "Ana", es lo que desempata. */
+  order_label: string
+  diner_name: string | null
+  total: string
+  paid: string
+  outstanding: string
+}
+
+export interface TableBill {
+  id: string
+  branch_id: string
+  dining_table_id: string
+  status: 'open' | 'settled'
+  total: string
+  members: TableBillMember[]
+  /** Lo que falta por cubrir AHORA. Cero = se puede liquidar. */
+  outstanding: string
+  closed_at: string | null
+}
+
+export interface BillReceiptLine {
+  name: string
+  quantity: number
+  line_subtotal: string
+}
+export interface BillReceiptMember {
+  order_id: string
+  order_label: string
+  diner_name: string | null
+  total: string
+  lines: BillReceiptLine[]
+}
+export interface BillReceipt {
+  bill_id: string
+  business_name: string
+  tax_id: string | null
+  business_address: string | null
+  branch_name: string
+  table_number: string
+  total: string
+  methods: string[]
+  members: BillReceiptMember[]
+  closed_at: string | null
+  is_fiscal_invoice: boolean
+}
+
+/** Agrupa las comandas de una mesa. Sin `order_ids` toma TODAS las abiertas (el caso común). */
+export async function openTableBill(input: {
+  dining_table_id: string
+  employee_id: string
+  order_ids?: string[]
+}): Promise<TableBill> {
+  return (await http.post<TableBill>('/orders/table-bills', input)).data
+}
+
+export async function getTableBill(billId: string): Promise<TableBill> {
+  return (await http.get<TableBill>(`/orders/table-bills/${billId}`)).data
+}
+
+/** Deshace la agrupación. Los miembros salen intactos: no se cobró ni se cerró nada. */
+export async function dissolveTableBill(billId: string): Promise<void> {
+  await http.delete(`/orders/table-bills/${billId}`)
+}
+
+/**
+ * Cobra la cuenta. Si cubre, el servidor cierra a todos sus miembros en la MISMA transacción.
+ *
+ * Varios pagos porque una mesa paga con lo que tenga: parte tarjeta, parte efectivo.
+ */
+export async function chargeTableBill(
+  billId: string,
+  payments: { amount: string; method: string }[],
+  employeeId: string,
+): Promise<TableBill> {
+  return (
+    await http.post<TableBill>(`/orders/table-bills/${billId}/payments`, {
+      payments,
+      employee_id: employeeId,
+    })
+  ).data
+}
+
+/** Los datos de la tirilla, ya juntos. Leer NO imprime. */
+export async function getBillReceipt(billId: string): Promise<BillReceipt> {
+  return (await http.get<BillReceipt>(`/orders/table-bills/${billId}/receipt`)).data
+}
+
+/** Registra que se imprimió. Una segunda vez queda marcada como reimpresión. */
+export async function recordBillReceipt(
+  billId: string,
+  employeeId: string,
+): Promise<{ is_reprint: boolean }> {
+  return (
+    await http.post<{ is_reprint: boolean }>(`/orders/table-bills/${billId}/receipts`, {
+      employee_id: employeeId,
+    })
+  ).data
+}
+
+/**
+ * El QR de una mesa, listo para imprimir.
+ *
+ * La URL la construye el BACKEND y llega hecha. El front no la arma nunca: la forma del enlace
+ * público se decide en un solo sitio (`shared/links.py`), y esa URL se IMPRIME — dos sitios que
+ * la construyan es un papel que discrepa del router y hay que despegarlo de diez mesas.
+ */
+export async function getTableQr(tableId: string): Promise<TableQr> {
+  return (await http.get<TableQr>(`/orders/tables/${tableId}/qr`)).data
 }
 
 export async function createTable(input: {

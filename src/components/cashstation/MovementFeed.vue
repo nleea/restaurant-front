@@ -22,6 +22,20 @@ const filtered = computed(() =>
   filter.value === 'all' ? cash.movements : cash.movements.filter((m) => m.kind === filter.value),
 )
 
+// Cuántas líneas dejó cada cobro de mesa. Cobrar la mesa 5 con un billete produce un movimiento
+// por comanda: para el arqueo es la misma plata, pero el cajero hizo UN gesto y sin decírselo
+// vería tres cobros donde hizo uno.
+const billCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const m of cash.movements) {
+    if (m.billId) counts.set(m.billId, (counts.get(m.billId) ?? 0) + 1)
+  }
+  return counts
+})
+function billGroupSize(m: { billId?: string }): number {
+  return m.billId ? (billCounts.value.get(m.billId) ?? 0) : 0
+}
+
 const PER_PAGE = 8
 const page = ref(1)
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / PER_PAGE)))
@@ -102,7 +116,17 @@ const ACTIONS = [
         </span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline justify-between gap-3">
-            <p class="truncate text-[13px] font-medium text-ink">{{ m.concept }}</p>
+            <p class="truncate text-[13px] font-medium text-ink">
+              {{ m.concept }}
+              <span
+                v-if="billGroupSize(m) > 1"
+                class="ml-1 rounded border border-hairline px-1 font-mono text-[10px] font-normal text-muted"
+                title="Parte de un solo cobro de mesa"
+                data-testid="bill-group-mark"
+              >
+                cobro de mesa · {{ billGroupSize(m) }}
+              </span>
+            </p>
             <span
               class="shrink-0 font-mono text-[13px] font-semibold tabular-nums"
               :class="m.amount >= 0 ? 'text-success-600' : 'text-alert-600'"

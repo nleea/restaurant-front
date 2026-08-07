@@ -48,6 +48,8 @@ function order(items: KdsItem[], startedMinAgo = 10, bumped = false): KdsOrder {
     guests: 2,
     type: 'dinein',
     waiter: 'Ana',
+    diner: '',
+    selfOrdered: false,
     startedAt: NOW - startedMinAgo * MIN,
     bumpedAt: bumped ? NOW : null,
     items,

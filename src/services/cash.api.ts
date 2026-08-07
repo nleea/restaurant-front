@@ -33,6 +33,8 @@ export interface CashMovement {
   category: string
   created_at: string
   reference_id: string | null
+  /** La cuenta de mesa que produjo el movimiento, si la hubo. La deriva el servidor. */
+  table_bill_id?: string | null
 }
 
 export interface OpenSessionInput {

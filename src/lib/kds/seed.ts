@@ -122,6 +122,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 4,
       type: 'dinein',
       waiter: 'Camila',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 37 * MIN,
       bumpedAt: null,
       items: [
@@ -141,6 +143,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 6,
       type: 'dinein',
       waiter: 'Diego',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 22 * MIN,
       bumpedAt: null,
       items: [
@@ -160,6 +164,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 2,
       type: 'delivery',
       waiter: 'Paola',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 12 * MIN,
       bumpedAt: null,
       items: [
@@ -180,6 +186,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 3,
       type: 'dinein',
       waiter: 'Andrés',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 8 * MIN,
       bumpedAt: null,
       items: [
@@ -198,6 +206,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 2,
       type: 'dinein',
       waiter: 'Camila',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 9 * MIN,
       bumpedAt: null,
       items: [
@@ -215,6 +225,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 1,
       type: 'takeout',
       waiter: 'Diego',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 5 * MIN,
       bumpedAt: null,
       items: [
@@ -232,6 +244,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 5,
       type: 'delivery',
       waiter: 'Paola',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 15 * MIN,
       bumpedAt: null,
       items: [
@@ -250,6 +264,8 @@ export function seedOrders(now: number): KdsOrder[] {
       guests: 3,
       type: 'dinein',
       waiter: 'Andrés',
+    diner: '',
+    selfOrdered: false,
       startedAt: now - 18 * MIN,
       bumpedAt: null,
       items: [

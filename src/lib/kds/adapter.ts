@@ -75,6 +75,8 @@ export function adaptTickets(
         guests: 0,
         type: CHANNEL_MAP[info?.channel ?? ''] ?? 'dinein',
         waiter: '',
+        diner: info?.dinerName ?? '',
+        selfOrdered: info?.origin === 'qr',
         startedAt: enteredAt,
         bumpedAt: null,
         items: [],

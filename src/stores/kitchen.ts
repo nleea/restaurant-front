@@ -21,6 +21,10 @@ export interface ItemInfo {
   orderId: string | null
   channel: string | null
   tableNumber: string | null
+  /** Quién pidió, cuando la comanda lo sabe. Sin mesero, es como se entrega el plato. */
+  dinerName: string | null
+  /** `qr` = nadie del negocio miró este pedido antes de llegar al fogón. */
+  origin: string | null
   /** Product variant behind the item — lets the KDS fetch the dish's recipe card. */
   variantId: string | null
 }
@@ -31,6 +35,10 @@ export interface OrderDocket {
   orderId: string | null
   channel: string | null
   tableNumber: string | null
+  /** Quién pidió, cuando la comanda lo sabe. Sin mesero, es como se entrega el plato. */
+  dinerName: string | null
+  /** `qr` = nadie del negocio miró este pedido antes de llegar al fogón. */
+  origin: string | null
   tickets: Ticket[]
 }
 
@@ -139,6 +147,8 @@ export const useKitchenStore = defineStore('kitchen', {
               orderId: info?.orderId ?? null,
               channel: info?.channel ?? null,
               tableNumber: info?.tableNumber ?? null,
+              dinerName: info?.dinerName ?? null,
+              origin: info?.origin ?? null,
               tickets: [],
             }
             map.set(key, docket)
@@ -377,6 +387,8 @@ export const useKitchenStore = defineStore('kitchen', {
             orderId: order.id,
             channel: order.channel,
             tableNumber: tableNumber(order.dining_table_id),
+            dinerName: order.diner_name ?? null,
+            origin: order.origin ?? null,
             variantId: item.product_variant_id ?? null,
           }
         }

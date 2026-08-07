@@ -6,6 +6,7 @@ const table = (id: string, number: string, active = true): DiningTable => ({
   id,
   branch_id: 'b1',
   number,
+  code: null,
   capacity: 4,
   status: 'free',
   is_active: active,
@@ -28,6 +29,8 @@ const order = (
   discount: '0',
   total,
   dining_table_id: tableId,
+  diner_name: null,
+  origin: 'staff',
   customer_id: null,
   whatsapp_contact_id: null,
   closed_at: null,
@@ -111,5 +114,56 @@ describe('occupancyCounts', () => {
       [order('o1', 't1', '10000')],
     )
     expect(occupancyCounts(vms)).toEqual({ total: 3, free: 2, occupied: 1 })
+  })
+})
+
+
+describe('una mesa con varias comandas (pedido por QR)', () => {
+  it('suma TODAS, no sólo la primera', () => {
+    // El fallo que esto previene: la tarjeta decía la cuenta de un comensal y el cajero
+    // cobraba otra cosa.
+    const vms = buildTableVMs(
+      [table('t1', '5')],
+      [
+        { ...order('o1', 't1', '32000.00'), diner_name: 'Ana' },
+        { ...order('o2', 't1', '54000.00'), diner_name: 'Luis' },
+      ],
+    )
+
+    expect(vms[0]?.total).toBe(86000)
+    expect(vms[0]?.openOrders).toHaveLength(2)
+  })
+
+  it('nombra a los comensales que la mesa sostiene', () => {
+    const vms = buildTableVMs(
+      [table('t1', '5')],
+      [
+        { ...order('o1', 't1', '32000.00'), diner_name: 'Ana' },
+        { ...order('o2', 't1', '54000.00'), diner_name: 'Luis' },
+      ],
+    )
+
+    expect(vms[0]?.dinerNames).toEqual(['Ana', 'Luis'])
+  })
+
+  it('una comanda sin nombre no deja un hueco en la lista', () => {
+    // Las que abre un mesero no llevan nombre: no pueden aparecer como comensal vacío.
+    const vms = buildTableVMs(
+      [table('t1', '5')],
+      [
+        { ...order('o1', 't1', '10000.00'), diner_name: null },
+        { ...order('o2', 't1', '10000.00'), diner_name: 'Ana' },
+      ],
+    )
+
+    expect(vms[0]?.dinerNames).toEqual(['Ana'])
+  })
+
+  it('una mesa libre no suma nada ni nombra a nadie', () => {
+    const vms = buildTableVMs([table('t1', '5')], [])
+
+    expect(vms[0]?.isOccupied).toBe(false)
+    expect(vms[0]?.total).toBe(0)
+    expect(vms[0]?.dinerNames).toEqual([])
   })
 })

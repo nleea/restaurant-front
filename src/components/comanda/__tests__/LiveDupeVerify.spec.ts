@@ -28,6 +28,8 @@ const ORDER = {
   discount: '0.00',
   total: '25000.00',
   dining_table_id: null,
+  diner_name: null,
+  origin: 'staff',
   customer_id: null,
   whatsapp_contact_id: null as string | null,
   closed_at: null,

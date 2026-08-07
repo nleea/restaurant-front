@@ -35,6 +35,8 @@ const ORDER = {
   discount: '0.00',
   total: '0.00',
   dining_table_id: 't1',
+  diner_name: null,
+  origin: 'staff',
   customer_id: null,
   whatsapp_contact_id: null,
   closed_at: null,

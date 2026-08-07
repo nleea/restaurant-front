@@ -161,3 +161,40 @@ export async function createOrder(
 ): Promise<CreatedOrder> {
   return (await http.post<CreatedOrder>(scoped('/orders', branchCode), payload)).data
 }
+
+// --- Pedido en mesa por QR ------------------------------------------------------------------
+/** La mesa detrás del QR pegado a ella, más si el negocio puede atender ahora mismo. */
+export interface StorefrontTable {
+  id: string
+  number: string
+  branchId: string
+  branchName: string
+  // Viene en la PRIMERA petición para poder decir "todavía no abrimos" antes del carrito. Que
+  // alguien monte un pedido entero y se lo rechacen al confirmar es hacerle perder el tiempo
+  // por algo que ya se sabía.
+  canOrderNow: boolean
+}
+
+export interface CreateTableOrderPayload {
+  dinerName: string
+  lines: OrderLinePayload[]
+}
+
+// Sede y mesa son SEGMENTOS de ruta, nunca cuerpo ni query. Es la misma regla que ya defiende
+// la carta y aquí importa más: una mesa en el cuerpo dejaría pedir a la mesa 5 mirando la carta
+// de otra sede, y la comida saldría en la cocina equivocada.
+function tableScoped(branchCode: string, tableCode: string, path = ''): string {
+  return `/storefront/${encodeURIComponent(branchCode)}/tables/${encodeURIComponent(tableCode)}${path}`
+}
+
+export async function resolveTable(branchCode: string, tableCode: string): Promise<StorefrontTable> {
+  return (await http.get<StorefrontTable>(tableScoped(branchCode, tableCode))).data
+}
+
+export async function createTableOrder(
+  branchCode: string,
+  tableCode: string,
+  payload: CreateTableOrderPayload,
+): Promise<CreatedOrder> {
+  return (await http.post<CreatedOrder>(tableScoped(branchCode, tableCode, '/orders'), payload)).data
+}
