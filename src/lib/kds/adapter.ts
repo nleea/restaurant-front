@@ -75,6 +75,8 @@ export function adaptTickets(
         guests: 0,
         type: CHANNEL_MAP[info?.channel ?? ''] ?? 'dinein',
         waiter: '',
+        diner: info?.dinerName ?? '',
+        selfOrdered: info?.origin === 'qr',
         startedAt: enteredAt,
         bumpedAt: null,
         items: [],
@@ -91,12 +93,16 @@ export function adaptTickets(
         qty: resolved ? info.quantity : 1,
         name: label,
         modifiers: [],
+        note: ticket.notes ?? null,
         components: [],
         variantId: info?.variantId ?? null,
       }
       itemsById.set(ticket.order_item_id, item)
       order.items.push(item)
     }
+    // The note lives on the item; all of its station tickets carry the same value. Backfill in
+    // case the first ticket to arrive happened to have it null.
+    if (!item.note && ticket.notes) item.note = ticket.notes
 
     const status = STATUS_MAP[ticket.status] ?? 'pending'
     item.components.push({

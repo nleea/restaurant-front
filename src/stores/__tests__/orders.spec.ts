@@ -13,10 +13,12 @@ const apiMock = vi.hoisted(() => ({
   cancelOrder: vi.fn<(...a: unknown[]) => unknown>(),
   listItems: vi.fn<(...a: unknown[]) => unknown>(),
   addItem: vi.fn<(...a: unknown[]) => unknown>(),
+  setItemNotes: vi.fn<(...a: unknown[]) => unknown>(),
   updateItemQuantity: vi.fn<(...a: unknown[]) => unknown>(),
   removeItem: vi.fn<(...a: unknown[]) => unknown>(),
   registerPayment: vi.fn<(...a: unknown[]) => unknown>(),
   listPayments: vi.fn<(...a: unknown[]) => unknown>(),
+  verifyPayment: vi.fn<(...a: unknown[]) => unknown>(),
 }))
 vi.mock('@/services/orders.api', () => apiMock)
 
@@ -33,10 +35,15 @@ const ORDER = {
   discount: '0.00',
   total: '0.00',
   dining_table_id: 't1',
+  diner_name: null,
+  origin: 'staff',
   customer_id: null,
   whatsapp_contact_id: null,
   closed_at: null,
   kitchen_state: 'none' as const,
+  // Efectivo: no necesita verificación. Estos tests son del ciclo de la comanda,
+  // no del gate de pago prepagado (que tiene el suyo).
+  payment_method: 'cash' as string | null,
 }
 const ITEM = {
   id: 'i1',
@@ -46,6 +53,8 @@ const ITEM = {
   unit_price: '15000.00',
   line_subtotal: '30000.00',
   status: 'pending',
+  notes: null,
+  sent: false,
 }
 
 beforeEach(() => {
@@ -104,6 +113,7 @@ describe('orders store', () => {
 
     await orders.addItem('o1', 'v1', 2)
 
+    // A tile tap carries no note — the kitchen note is written later, on the dupe.
     expect(apiMock.addItem).toHaveBeenCalledWith('o1', {
       product_variant_id: 'v1',
       quantity: 2,
@@ -112,6 +122,31 @@ describe('orders store', () => {
     // Server totals are shown verbatim after refetch.
     expect(orders.orders[0]?.total).toBe('30000.00')
     expect(orders.itemsOf('o1')).toHaveLength(1)
+  })
+
+  it('setItemNotes trims the note and refetches the order', async () => {
+    apiMock.setItemNotes.mockResolvedValue(ITEM)
+    apiMock.getOrder.mockResolvedValue(ORDER)
+    apiMock.listItems.mockResolvedValue([ITEM])
+    const orders = useOrdersStore()
+    orders.orders = [ORDER]
+
+    await orders.setItemNotes('o1', 'i1', '  sin cebolla  ')
+
+    expect(apiMock.setItemNotes).toHaveBeenCalledWith('i1', 'sin cebolla')
+    expect(apiMock.getOrder).toHaveBeenCalledWith('o1')
+  })
+
+  it('setItemNotes sends null when the waiter empties the field', async () => {
+    apiMock.setItemNotes.mockResolvedValue(ITEM)
+    apiMock.getOrder.mockResolvedValue(ORDER)
+    apiMock.listItems.mockResolvedValue([ITEM])
+    const orders = useOrdersStore()
+    orders.orders = [ORDER]
+
+    await orders.setItemNotes('o1', 'i1', '   ')
+
+    expect(apiMock.setItemNotes).toHaveBeenCalledWith('i1', null)
   })
 
   it('labels items from the variant index, never raw UUIDs', () => {
@@ -211,3 +246,98 @@ describe('orders store', () => {
 function orderStoreWithEmployee(): void {
   apiMock.getMyEmployee.mockResolvedValue(EMP)
 }
+
+describe('payment verification', () => {
+  it('a prepaid order with no payments needs verification', () => {
+    const store = useOrdersStore()
+    store.orders = [{ ...ORDER, total: '25000.00', payment_method: 'transfer' }]
+    store.paymentsByOrder = { o1: [] }
+
+    expect(store.needsPaymentVerification('o1')).toBe(true)
+  })
+
+  it('a cash order never needs it — its money arrives at the door', () => {
+    const store = useOrdersStore()
+    store.orders = [{ ...ORDER, total: '25000.00', payment_method: 'cash' }]
+    store.paymentsByOrder = { o1: [] }
+
+    expect(store.needsPaymentVerification('o1')).toBe(false)
+  })
+
+  it('a covered prepaid order stops needing it', () => {
+    const store = useOrdersStore()
+    store.orders = [{ ...ORDER, total: '25000.00', payment_method: 'transfer' }]
+    store.paymentsByOrder = {
+      o1: [
+        {
+          id: 'p1',
+          order_id: 'o1',
+          branch_id: 'b1',
+          cash_session_id: 'c1',
+          amount: '25000.00',
+          method: 'transfer',
+          employee_id: 'e1',
+          diner_reference: null,
+        },
+      ],
+    }
+
+    expect(store.needsPaymentVerification('o1')).toBe(false)
+  })
+
+  it('verifying pays and fires in one call, then refreshes the order', async () => {
+    const store = useOrdersStore()
+    store.orders = [{ ...ORDER, payment_method: 'transfer' }]
+    apiMock.verifyPayment.mockResolvedValue({ ...ORDER, payment_method: 'transfer' })
+    apiMock.getOrder.mockResolvedValue({ ...ORDER, payment_method: 'transfer' })
+    apiMock.listItems.mockResolvedValue([])
+    apiMock.listPayments.mockResolvedValue([])
+
+    await store.verifyPayment('o1', 'e1')
+
+    expect(apiMock.verifyPayment).toHaveBeenCalledWith('o1', 'e1')
+  })
+
+  it('verificar relee los PAGOS, no sólo el pedido', async () => {
+    // El bug que esto fija: verificar registra el pago en el servidor, pero la pantalla seguía
+    // calculando "saldada" con los pagos viejos (ninguno). La comanda no ofrecía cerrarse hasta
+    // que alguien salía y volvía a entrar — con el pedido ya pagado y en cocina.
+    const store = useOrdersStore()
+    store.orders = [{ ...ORDER, payment_method: 'transfer', total: '46000.00' }]
+    store.paymentsByOrder = { o1: [] }
+    apiMock.verifyPayment.mockResolvedValue({ ...ORDER, payment_method: 'transfer' })
+    apiMock.getOrder.mockResolvedValue({
+      ...ORDER,
+      payment_method: 'transfer',
+      total: '46000.00',
+    })
+    apiMock.listItems.mockResolvedValue([])
+    apiMock.listPayments.mockResolvedValue([
+      { id: 'p1', order_id: 'o1', amount: '46000.00', method: 'transfer' },
+    ])
+
+    await store.verifyPayment('o1', 'e1')
+
+    expect(apiMock.listPayments).toHaveBeenCalledWith('o1')
+    expect(store.paidOf('o1')).toBe(46000)
+    expect(store.balanceOf('o1')).toBe(0)
+    // Y por lo tanto ya no hace falta verificar nada: la comanda puede cerrarse.
+    expect(store.needsPaymentVerification('o1')).toBe(false)
+  })
+})
+
+describe('a settled delivery leaves the pending-collection list', () => {
+  it('the salón only ever loads open orders, so a closed one drops out', async () => {
+    const store = useOrdersStore()
+    apiMock.listOrders.mockResolvedValue([ORDER])
+    await store.loadOrders('b1')
+
+    // Sin filtro explícito, la lista es de abiertas. Cuando la entrega cierra la comanda
+    // (backend), deja de venir — sin que Salón tenga que hacer nada.
+    expect(apiMock.listOrders).toHaveBeenCalledWith({ branchId: 'b1', status: 'open' })
+
+    apiMock.listOrders.mockResolvedValue([])
+    await store.loadOrders('b1')
+    expect(store.orders).toEqual([])
+  })
+})

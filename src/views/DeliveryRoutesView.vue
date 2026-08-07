@@ -7,11 +7,24 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import AppShell from '@/components/AppShell.vue'
 import RadiusPanel from '@/components/deliveryroutes/RadiusPanel.vue'
+import TariffPanel from '@/components/deliveryroutes/TariffPanel.vue'
+import { bandsAreValid, toPayload, type BandDraft } from '@/lib/tariffBands'
 import RouteDetailPanel from '@/components/deliveryroutes/RouteDetailPanel.vue'
 import { createRingsMap, type RingsController } from '@/components/deliveryroutes/useLeafletRings'
-import type { DeliveryRoute, Driver } from '@/lib/deliveryRoutes'
-import { openDeliveryPoints, RING_COLORS, RING_STEP_DEFAULT_KM, routeCode } from '@/lib/deliveryRoutes'
+import type { DriverMarkerInput, DeliveryRoute, Driver } from '@/lib/deliveryRoutes'
+import {
+  driverAgeLabel,
+  isPositionStale,
+  openDeliveryPoints,
+  RING_COLORS,
+  RING_STEP_DEFAULT_KM,
+  routeCode,
+} from '@/lib/deliveryRoutes'
 import { statusOf } from '@/lib/apiError'
+import { baseURL } from '@/lib/http'
+import { createSseClient, type SseClient } from '@/lib/sse'
+import { getAccessToken } from '@/lib/tokens'
+import { listActivePositions } from '@/services/delivery.api'
 import type { Employee } from '@/services/staff.api'
 import { useAuthStore } from '@/stores/auth'
 import { useBranchStore } from '@/stores/branch'
@@ -83,6 +96,36 @@ watch(stepKm, (value) => {
     }
   }, 500)
 })
+
+// --- tarifas por km: borrador local, guardado explícito -------------------------
+// A diferencia del radio (que se autoguarda con debounce), un plan de tarifas se guarda a mano.
+// El radio es una preferencia visual; esto es el precio que se le cobra a un cliente, y guardar
+// a medio escribir dejaría un plan roto —o peor, uno válido pero equivocado— cotizando pedidos.
+const tariffOpen = ref(false)
+const tariffDraft = ref<BandDraft[]>([])
+const savingTariffs = ref(false)
+
+/** El plan del servidor como borrador editable. Se rehace en cada carga y en cada guardado. */
+function resetTariffDraft() {
+  tariffDraft.value = delivery.tariffBands.map((b) => ({
+    maxKm: String(Number(b.max_distance_km)),
+    fee: String(Number(b.fee)),
+  }))
+}
+
+async function saveTariffs() {
+  if (!bandsAreValid(tariffDraft.value)) return
+  savingTariffs.value = true
+  try {
+    await delivery.saveTariffBands(toPayload(tariffDraft.value))
+    // Se relee del servidor: el orden y el redondeo los decide él, no el formulario.
+    resetTariffDraft()
+  } catch {
+    error.value = 'No se pudieron guardar las tarifas de domicilio.'
+  } finally {
+    savingTariffs.value = false
+  }
+}
 
 // --- live deliveries overlay: demand dots over the coverage rings ----------------
 const showDeliveries = ref(true)
@@ -171,11 +214,13 @@ async function load() {
       await Promise.all([
         delivery.loadRoutes(branch.activeBranchId),
         delivery.loadSettings(branch.activeBranchId),
+        delivery.loadTariffBands(branch.activeBranchId),
         staff.ensureLoaded({ branchId: branch.activeBranchId, active: true }),
-        dispatch.loadDeliveries(),
+        dispatch.loadDeliveries(branch.activeBranchId),
       ])
       const step = Number(delivery.settings?.ring_step_km)
       if (Number.isFinite(step) && step > 0) stepKm.value = step
+      resetTariffDraft()
     }
   } catch {
     error.value = 'No se pudieron cargar los domicilios.'
@@ -191,8 +236,160 @@ function frameInitial() {
   else if (center.value) rings?.centerOn(center.value, 14)
 }
 
+// Go live: the branch's `delivery` stream refetches the open drops so a new delivery — or a pin
+// the geocoding worker just resolved — appears on the map without a manual refresh (doorbell →
+// debounced refetch, polling fallback).
+function restartLive() {
+  delivery.stopLive()
+  if (branch.activeBranchId) delivery.startLive(branch.activeBranchId)
+}
+
+// --- live driver layer: each active run's marker + trail + staleness ----------------
+// Separate from the thin `delivery` doorbell above (which refetches drops). Positions ride the
+// dedicated `driver_position` topic as FAT events, applied DIRECTLY to the map (no refetch): the
+// initial trails come from GET /delivery/positions, then the SSE stream appends each fix. A slow
+// reconcile timer re-reads the authoritative set (dropping finished runs); a fast timer refreshes
+// the "hace X min" labels + de-emphasizes stale markers.
+const showDrivers = ref(true)
+const driverCount = ref(0)
+
+interface DriverEntry {
+  employeeId: string
+  coords: [number, number]
+  trail: [number, number][]
+  recordedAt: string
+}
+// Plain map (render plumbing, not reactive) keyed by run id.
+const driversByRun = new Map<string, DriverEntry>()
+let driverStream: SseClient | null = null
+let driverReconcileTimer: ReturnType<typeof setInterval> | undefined
+let driverStaleTimer: ReturnType<typeof setInterval> | undefined
+
+function toCoords(lat: string | null, lng: string | null): [number, number] | null {
+  const a = Number(lat)
+  const b = Number(lng)
+  return lat != null && lng != null && Number.isFinite(a) && Number.isFinite(b) ? [a, b] : null
+}
+
+function toMarkerInput(runId: string, entry: DriverEntry, now: number): DriverMarkerInput {
+  return {
+    runId,
+    label: employeeName(entry.employeeId),
+    coords: entry.coords,
+    trail: entry.trail,
+    ageLabel: driverAgeLabel(entry.recordedAt, now),
+    stale: isPositionStale(entry.recordedAt, now),
+  }
+}
+
+// Re-render the whole layer (also recomputes freshness labels) — reconciles removals too.
+function renderDrivers() {
+  driverCount.value = driversByRun.size
+  if (!rings) return
+  if (!showDrivers.value) {
+    rings.setDriverPositions([])
+    return
+  }
+  const now = Date.now()
+  const list: DriverMarkerInput[] = []
+  for (const [runId, entry] of driversByRun) list.push(toMarkerInput(runId, entry, now))
+  rings.setDriverPositions(list)
+}
+
+// Authoritative re-read: rebuild the active set (drivers whose runs finished simply vanish).
+async function reconcileDrivers() {
+  if (!branch.activeBranchId) return
+  try {
+    const positions = await listActivePositions(branch.activeBranchId)
+    const seen = new Set<string>()
+    for (const p of positions) {
+      const coords = toCoords(p.latitude, p.longitude)
+      if (!coords) continue
+      seen.add(p.run_id)
+      const trail = p.trail
+        .map((t) => toCoords(t.latitude, t.longitude))
+        .filter((c): c is [number, number] => c !== null)
+      driversByRun.set(p.run_id, {
+        employeeId: p.employee_id,
+        coords,
+        trail,
+        recordedAt: p.recorded_at,
+      })
+    }
+    for (const runId of driversByRun.keys()) if (!seen.has(runId)) driversByRun.delete(runId)
+    renderDrivers()
+  } catch {
+    // keep the last good layer; the next tick or event retries
+  }
+}
+
+// A fat position event → apply directly to that driver (append the point), no refetch.
+// A `finished` tombstone → drop that driver's marker + trail at once (no waiting for reconcile).
+function applyDriverEvent(data: unknown): void {
+  const p = data as {
+    run_id?: string
+    employee_id?: string
+    latitude?: string
+    longitude?: string
+    recorded_at?: string
+    branch_id?: string
+    event?: string
+  }
+  if (!p?.run_id) return
+  if (p.branch_id && branch.activeBranchId && p.branch_id !== branch.activeBranchId) return
+  if (p.event === 'finished') {
+    if (driversByRun.delete(p.run_id)) {
+      driverCount.value = driversByRun.size
+      rings?.removeDriver(p.run_id)
+    }
+    return
+  }
+  const coords = toCoords(p.latitude ?? null, p.longitude ?? null)
+  if (!coords) return
+  const existing = driversByRun.get(p.run_id)
+  const trail = existing ? existing.trail.slice() : []
+  const last = trail[trail.length - 1]
+  if (!last || last[0] !== coords[0] || last[1] !== coords[1]) trail.push(coords)
+  const entry: DriverEntry = {
+    employeeId: p.employee_id ?? existing?.employeeId ?? '',
+    coords,
+    trail,
+    recordedAt: p.recorded_at ?? new Date().toISOString(),
+  }
+  driversByRun.set(p.run_id, entry)
+  driverCount.value = driversByRun.size
+  if (rings && showDrivers.value) rings.upsertDriver(toMarkerInput(p.run_id, entry, Date.now()))
+}
+
+function startDriverLayer() {
+  stopDriverLayer()
+  if (!branch.activeBranchId) return
+  void reconcileDrivers()
+  driverReconcileTimer = setInterval(() => void reconcileDrivers(), 60_000)
+  driverStaleTimer = setInterval(renderDrivers, 20_000)
+  driverStream = createSseClient({
+    url: `${baseURL}/delivery/positions/events?branch_id=${branch.activeBranchId}`,
+    getToken: getAccessToken,
+    onEvent: applyDriverEvent,
+  })
+  driverStream.start()
+}
+
+function stopDriverLayer() {
+  driverStream?.stop()
+  driverStream = null
+  if (driverReconcileTimer) clearInterval(driverReconcileTimer)
+  driverReconcileTimer = undefined
+  if (driverStaleTimer) clearInterval(driverStaleTimer)
+  driverStaleTimer = undefined
+  driversByRun.clear()
+  driverCount.value = 0
+  rings?.setDriverPositions([])
+}
+
 onMounted(async () => {
   await load()
+  restartLive()
   if (!mapEl.value) return
   try {
     rings = await createRingsMap(mapEl.value, {
@@ -211,6 +408,7 @@ onMounted(async () => {
     rings.setCenter(center.value)
     syncMap()
     syncDeliveryDots()
+    startDriverLayer()
     if (center.value) frameInitial()
     else if (canManage.value) startPicking()
   } catch {
@@ -219,8 +417,11 @@ onMounted(async () => {
 })
 
 watch([deliveryOverlay, showDeliveries], syncDeliveryDots)
+watch(showDrivers, renderDrivers)
 onUnmounted(() => {
   if (stepSaveTimer) clearTimeout(stepSaveTimer)
+  delivery.stopLive()
+  stopDriverLayer()
   rings?.destroy()
 })
 
@@ -240,6 +441,8 @@ watch(
     delivery.drivers = []
     cancelPicking()
     await load()
+    restartLive()
+    startDriverLayer()
     rings?.setCenter(center.value)
     syncMap()
   },
@@ -541,6 +744,27 @@ async function removeDriver(route: DeliveryRoute, employeeId: string) {
           >
             {{ deliveryOverlay.unlocated }} sin ubicación
           </span>
+
+          <!-- Live drivers toggle: active couriers' markers + trails over the coverage. -->
+          <button
+            type="button"
+            class="pointer-events-auto flex items-center gap-1.5 rounded-xl border px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-wide shadow-[0_10px_28px_-12px_rgb(0_0_0/0.45)] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ember/40"
+            :class="
+              showDrivers
+                ? 'border-ember/60 bg-paper text-ember'
+                : 'border-line bg-paper text-steel-500 hover:text-ink'
+            "
+            :aria-pressed="showDrivers"
+            @click="showDrivers = !showDrivers"
+          >
+            Conductores
+            <span
+              class="grid min-w-5 place-items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums"
+              :class="driverCount > 0 ? 'bg-ember text-graphite-900' : 'bg-sunken text-steel-500'"
+            >
+              {{ driverCount }}
+            </span>
+          </button>
         </div>
 
         <!-- Radius configurator, docked bottom-left (needs a center to mean anything) -->
@@ -553,6 +777,17 @@ async function removeDriver(route: DeliveryRoute, employeeId: string) {
             :readonly="!canManage"
             @select="(id: string) => select(id)"
             @relocate="startPicking"
+          />
+        </div>
+
+        <!-- Tarifas por km, bajo los radios: operativa arriba, dinero abajo -->
+        <div v-if="center" class="pointer-events-none absolute bottom-4 left-[320px] z-[500]">
+          <TariffPanel
+            v-model:bands="tariffDraft"
+            v-model:open="tariffOpen"
+            :saving="savingTariffs"
+            :readonly="!canManage"
+            @save="saveTariffs"
           />
         </div>
 

@@ -8,6 +8,7 @@ import type {
 } from '@/services/inventory.api'
 import {
   createIngredient,
+  type Ingredient,
   listIngredients,
   updateIngredient,
   type UpdateIngredientInput,
@@ -29,6 +30,26 @@ interface IngredientInfo {
   unitAbbr: string
   unitId: string
   category: string | null
+  /** Kitchen station where this insumo is worked; null when nobody assigned one. */
+  defaultStationId: string | null
+}
+
+/** One place to resolve an ingredient into its display info — loading and reloading share it. */
+function buildIngredientIndex(
+  ingredients: Ingredient[],
+  units: { id: string; abbreviation: string }[],
+): Record<string, IngredientInfo> {
+  const index: Record<string, IngredientInfo> = {}
+  for (const ing of ingredients) {
+    index[ing.id] = {
+      name: ing.name,
+      unitAbbr: units.find((u) => u.id === ing.unit_of_measure_id)?.abbreviation ?? '',
+      unitId: ing.unit_of_measure_id,
+      category: ing.category ?? null,
+      defaultStationId: ing.default_station_id ?? null,
+    }
+  }
+  return index
 }
 
 // "Nuevo insumo" composes three real writes; the flags name what succeeded so the
@@ -40,6 +61,7 @@ export interface CreateInsumoInput {
   initialQuantity: string | null
   minStock: string | null
   employeeId: string | null
+  defaultStationId?: string | null
 }
 export interface CreateInsumoResult {
   ingredientId: string
@@ -135,32 +157,14 @@ export const useInventoryStore = defineStore('inventory', {
       ])
       this.branchId = branchId
       this.stock = stock
-      const index: Record<string, IngredientInfo> = {}
-      for (const ing of ingredients) {
-        index[ing.id] = {
-          name: ing.name,
-          unitAbbr: catalog.units.find((u) => u.id === ing.unit_of_measure_id)?.abbreviation ?? '',
-          unitId: ing.unit_of_measure_id,
-          category: ing.category ?? null,
-        }
-      }
-      this.ingredientIndex = index
+      this.ingredientIndex = buildIngredientIndex(ingredients, catalog.units)
     },
 
     // Rebuild the ingredient index after a create/edit (units are already cached).
     async reloadIngredients(): Promise<void> {
       const catalog = useCatalogStore()
       const ingredients = await listIngredients()
-      const index: Record<string, IngredientInfo> = {}
-      for (const ing of ingredients) {
-        index[ing.id] = {
-          name: ing.name,
-          unitAbbr: catalog.units.find((u) => u.id === ing.unit_of_measure_id)?.abbreviation ?? '',
-          unitId: ing.unit_of_measure_id,
-          category: ing.category ?? null,
-        }
-      }
-      this.ingredientIndex = index
+      this.ingredientIndex = buildIngredientIndex(ingredients, catalog.units)
     },
 
     async selectIngredient(ingredientId: string): Promise<void> {
@@ -193,6 +197,7 @@ export const useInventoryStore = defineStore('inventory', {
         name: input.name,
         category: input.category,
         unit_of_measure_id: input.unitOfMeasureId,
+        default_station_id: input.defaultStationId ?? null,
       })
       let stockOk = true
       let thresholdOk = true

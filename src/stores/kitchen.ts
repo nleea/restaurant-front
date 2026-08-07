@@ -4,7 +4,15 @@ import { createSseClient, type SseClient } from '@/lib/sse'
 import { getAccessToken } from '@/lib/tokens'
 import * as api from '@/services/kitchen.api'
 import { TICKET_STATUSES } from '@/services/kitchen.api'
-import type { KitchenStation, ProductStation, Ticket, TicketStatus } from '@/services/kitchen.api'
+import type {
+  KitchenStation,
+  ProductStation,
+  StationSuggestion,
+  StationTask,
+  Ticket,
+  TicketStatus,
+  UnroutableProduct,
+} from '@/services/kitchen.api'
 import { useOrdersStore } from '@/stores/orders'
 
 export interface ItemInfo {
@@ -13,6 +21,10 @@ export interface ItemInfo {
   orderId: string | null
   channel: string | null
   tableNumber: string | null
+  /** Quién pidió, cuando la comanda lo sabe. Sin mesero, es como se entrega el plato. */
+  dinerName: string | null
+  /** `qr` = nadie del negocio miró este pedido antes de llegar al fogón. */
+  origin: string | null
   /** Product variant behind the item — lets the KDS fetch the dish's recipe card. */
   variantId: string | null
 }
@@ -23,6 +35,10 @@ export interface OrderDocket {
   orderId: string | null
   channel: string | null
   tableNumber: string | null
+  /** Quién pidió, cuando la comanda lo sabe. Sin mesero, es como se entrega el plato. */
+  dinerName: string | null
+  /** `qr` = nadie del negocio miró este pedido antes de llegar al fogón. */
+  origin: string | null
   tickets: Ticket[]
 }
 
@@ -32,6 +48,9 @@ interface KitchenState {
   ticketsByStation: Record<string, Ticket[]>
   // product_id → its station mappings (loaded on demand for the setup UI).
   stationsByProduct: Record<string, ProductStation[]>
+  // Los productos que nadie puede preparar. Vive aquí y no en el store de la carta porque es un
+  // hecho de COCINA: quién prepara qué. La carta sólo lo muestra.
+  unroutableProducts: UnroutableProduct[]
   // order_item_id → product/variant label, quantity, and order context (table/channel), resolved
   // from the menu + open orders so a ticket (which carries only order_item_id) shows a full chit.
   itemIndex: Record<string, ItemInfo>
@@ -68,6 +87,7 @@ export const useKitchenStore = defineStore('kitchen', {
     selectedStationId: null,
     ticketsByStation: {},
     stationsByProduct: {},
+    unroutableProducts: [],
     itemIndex: {},
   }),
 
@@ -127,6 +147,8 @@ export const useKitchenStore = defineStore('kitchen', {
               orderId: info?.orderId ?? null,
               channel: info?.channel ?? null,
               tableNumber: info?.tableNumber ?? null,
+              dinerName: info?.dinerName ?? null,
+              origin: info?.origin ?? null,
               tickets: [],
             }
             map.set(key, docket)
@@ -263,6 +285,10 @@ export const useKitchenStore = defineStore('kitchen', {
       await this.loadStations(branchId)
     },
 
+    async loadUnroutableProducts(): Promise<void> {
+      this.unroutableProducts = await api.listUnroutableProducts()
+    },
+
     async loadProductStations(productId: string): Promise<void> {
       this.stationsByProduct[productId] = await api.listProductStations(productId)
     },
@@ -271,13 +297,29 @@ export const useKitchenStore = defineStore('kitchen', {
       productId: string,
       stationId: string,
       role?: string | null,
+      tasks?: StationTask[],
     ): Promise<void> {
       await api.attachProductStation({
         product_id: productId,
         kitchen_station_id: stationId,
         role: role ?? null,
+        ...(tasks ? { tasks } : {}),
       })
       await this.loadProductStations(productId)
+    },
+
+    /**
+     * Lo que la receta del producto propone, para que una persona lo revise.
+     *
+     * Se devuelve y NO se guarda en `stationsByProduct`: una sugerencia es un borrador, no un
+     * mapeo persistido, y confundirlos haría que el panel mostrara como configurado algo que
+     * nadie confirmó. Pedirla tampoco escribe nada en el servidor.
+     */
+    async fetchStationSuggestion(
+      productId: string,
+      branchId: string,
+    ): Promise<StationSuggestion> {
+      return await api.getStationSuggestion(productId, branchId)
     },
 
     async detachProduct(productId: string, stationId: string): Promise<void> {
@@ -290,7 +332,7 @@ export const useKitchenStore = defineStore('kitchen', {
     async updateMapping(
       productId: string,
       mappingId: string,
-      patch: Partial<{ role: string | null; tasks: string[] }>,
+      patch: Partial<{ role: string | null; tasks: StationTask[] }>,
     ): Promise<void> {
       await api.updateProductStation(mappingId, patch)
       await this.loadProductStations(productId)
@@ -345,6 +387,8 @@ export const useKitchenStore = defineStore('kitchen', {
             orderId: order.id,
             channel: order.channel,
             tableNumber: tableNumber(order.dining_table_id),
+            dinerName: order.diner_name ?? null,
+            origin: order.origin ?? null,
             variantId: item.product_variant_id ?? null,
           }
         }

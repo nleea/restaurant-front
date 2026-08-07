@@ -4,6 +4,7 @@ import type { Employee, PlannedShift, ShiftInput } from '@/services/staff.api'
 import * as rbacApi from '@/services/rbac.api'
 import type { Role, UserSummary } from '@/services/rbac.api'
 import { useBranchStore } from '@/stores/branch'
+import { stationLabel } from '@/lib/stations'
 
 // True when `end` is strictly after `start` for two same-format time strings ("HH:MM" or
 // "HH:MM:SS"). Zero-padded 24h times compare correctly as plain strings.
@@ -22,6 +23,13 @@ export interface AddEmployeeInput {
   phone?: string | null
 }
 
+/** A station a role can reach, and whether it can write there. Derived from permission codes. */
+export interface RoleStation {
+  module: string
+  label: string
+  manages: boolean
+}
+
 interface StaffState {
   employees: Employee[]
   shiftsByEmployee: Record<string, PlannedShift[]>
@@ -29,6 +37,10 @@ interface StaffState {
   usersById: Record<string, UserSummary>
   roles: Role[]
   directoriesLoaded: boolean
+  // Permission codes per role, used to describe what a role actually unlocks instead of
+  // hardcoding copy. `null` means "we asked and can't know" — reading a role's permissions
+  // requires `rbac.manage`, which a staff manager may not hold, so the UI must degrade.
+  permissionsByRole: Record<string, string[] | null>
 }
 
 // Mirrors the menu/RBAC store discipline: each mutation writes through the API then refetches
@@ -41,6 +53,7 @@ export const useStaffStore = defineStore('staff', {
     usersById: {},
     roles: [],
     directoriesLoaded: false,
+    permissionsByRole: {},
   }),
 
   getters: {
@@ -66,6 +79,27 @@ export const useStaffStore = defineStore('staff', {
       (state) =>
       (employeeId: string): PlannedShift[] =>
         state.shiftsByEmployee[employeeId] ?? [],
+    // "What does this role actually let someone do?" answered from the real permission set:
+    // `cash.read` + `kitchen.manage` → Caja (lectura) · Cocina (gestiona). Returns null while
+    // unknown or unreadable so the caller can hide the block rather than claim "no access".
+    roleStations:
+      (state) =>
+      (roleId: string): RoleStation[] | null => {
+        const codes = state.permissionsByRole[roleId]
+        if (!codes) return null
+        const byModule = new Map<string, boolean>()
+        for (const code of codes) {
+          const [module, action] = code.split('.')
+          if (!module) continue
+          byModule.set(module, (byModule.get(module) ?? false) || action === 'manage')
+        }
+        return [...byModule.entries()]
+          .map(([module, manages]) => ({ module, label: stationLabel(module), manages }))
+          // Writable stations first, then alphabetically — the strongest signal leads.
+          .sort((a, b) =>
+            a.manages === b.manages ? a.label.localeCompare(b.label) : a.manages ? -1 : 1,
+          )
+      },
   },
 
   actions: {
@@ -117,9 +151,42 @@ export const useStaffStore = defineStore('staff', {
       await this.fetchEmployees()
     },
 
+    /** Señala a esta persona para recibir alertas escaladas por WhatsApp. */
+    async setAlertSubscription(employeeId: string, receives: boolean): Promise<void> {
+      await api.setAlertSubscription(employeeId, receives)
+      await this.fetchEmployees()
+    },
+
+    /** El teléfono al que el sistema puede escribirle a esta persona. */
+    async setPhone(employeeId: string, phone: string | null): Promise<void> {
+      await api.setEmployeePhone(employeeId, phone)
+      await this.fetchEmployees()
+    },
+
+    // Fetch a role's permission codes once. A 403 (no `rbac.manage`) is not an error here —
+    // the station breakdown is enrichment, so we record "unknown" and move on.
+    async loadRolePermissions(roleId: string): Promise<void> {
+      if (roleId in this.permissionsByRole) return
+      try {
+        this.permissionsByRole[roleId] = await rbacApi.getRolePermissions(roleId)
+      } catch {
+        this.permissionsByRole[roleId] = null
+      }
+    },
+
     async deactivate(employeeId: string): Promise<void> {
       await api.deactivateEmployee(employeeId)
       await this.fetchEmployees()
+    },
+
+    async activate(employeeId: string): Promise<void> {
+      await api.activateEmployee(employeeId)
+      await this.fetchEmployees()
+    },
+
+    /** One entry point for the header toggle, so callers don't branch on the current state. */
+    async setActive(employeeId: string, active: boolean): Promise<void> {
+      await (active ? this.activate(employeeId) : this.deactivate(employeeId))
     },
 
     async fetchShifts(employeeId: string): Promise<void> {

@@ -28,11 +28,12 @@ describe('delivery dispatch api layer', () => {
       order_id: 'o1',
       address_text: 'Cra 1 #2-3',
     })
-    await api.listDeliveries()
-    expect(get).toHaveBeenCalledWith('/delivery/deliveries', { params: undefined })
-    await api.listDeliveries('in_transit')
+    // Always branch-scoped: a tenant-wide list would mix two branches' boards.
+    await api.listDeliveries('b1')
+    expect(get).toHaveBeenCalledWith('/delivery/deliveries', { params: { branch_id: 'b1' } })
+    await api.listDeliveries('b1', 'in_transit')
     expect(get).toHaveBeenLastCalledWith('/delivery/deliveries', {
-      params: { status_filter: 'in_transit' },
+      params: { branch_id: 'b1', status_filter: 'in_transit' },
     })
   })
 
@@ -58,8 +59,10 @@ describe('delivery dispatch api layer', () => {
       delivery_route_id: 'r1',
       employee_id: 'e1',
     })
-    await api.listRuns('preparing')
-    expect(get).toHaveBeenLastCalledWith('/delivery/runs', { params: { status_filter: 'preparing' } })
+    await api.listRuns('b1', 'preparing')
+    expect(get).toHaveBeenLastCalledWith('/delivery/runs', {
+      params: { branch_id: 'b1', status_filter: 'preparing' },
+    })
   })
 
   it('drives the lifecycle transitions', async () => {

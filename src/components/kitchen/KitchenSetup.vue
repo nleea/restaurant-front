@@ -1,34 +1,58 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+// Configuración de cocina: qué estaciones tiene esta sede y en qué orden salen en el pase.
+//
+// Antes esta pantalla también asignaba platos a estaciones, con un desplegable de productos que
+// obligaba a saber de antemano cuál ibas a configurar. Eso vive ahora en la carta, junto al plato
+// —que es donde está la persona cuando hace falta— y con la receta a mano para deducir las tareas.
+// Aquí quedó lo que sólo se puede hacer aquí: montar la línea. Y lo que sólo se ve desde aquí:
+// qué platos siguen sin que nadie los prepare.
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
-import InputNumber from 'primevue/inputnumber'
-import Select from 'primevue/select'
 import ToggleSwitch from 'primevue/toggleswitch'
-import type { ProductStation } from '@/services/kitchen.api'
 import { useBranchStore } from '@/stores/branch'
 import { useKitchenStore } from '@/stores/kitchen'
-import { useMenuStore } from '@/stores/menu'
 
 const branch = useBranchStore()
 const kitchen = useKitchenStore()
-const menu = useMenuStore()
 
 const error = ref<string | null>(null)
+const busy = ref(false)
 
-// --- Stations --------------------------------------------------------------
+async function run(action: () => Promise<void>, failure: string) {
+  busy.value = true
+  error.value = null
+  try {
+    await action()
+  } catch {
+    error.value = failure
+  } finally {
+    busy.value = false
+  }
+}
+
+// --- Estaciones --------------------------------------------------------------
+// El orden es el del pase, no un número que alguien tenga que inventar: se mueve con flechas y
+// la posición se calcula sola. Pedir "posición 3" en un campo numérico era pedir que la persona
+// llevara la cuenta de una lista que ya está en pantalla.
+const ordered = computed(() =>
+  [...kitchen.stations].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name)),
+)
+
 const newName = ref('')
-const newPosition = ref<number>(0)
 const creating = ref(false)
 
 async function createStation() {
-  if (!branch.activeBranchId || newName.value.trim() === '') return
+  const name = newName.value.trim()
+  if (!branch.activeBranchId || !name) return
   creating.value = true
   error.value = null
   try {
-    await kitchen.createStation(branch.activeBranchId, newName.value.trim(), newPosition.value)
+    // Nace al final de la línea: el sitio donde no estorba a nada de lo ya montado.
+    const position = ordered.value.length
+    await kitchen.createStation(branch.activeBranchId, name, position)
     newName.value = ''
-    newPosition.value = 0
   } catch {
     error.value = 'No se pudo crear la estación.'
   } finally {
@@ -36,114 +60,46 @@ async function createStation() {
   }
 }
 
-async function toggleActive(stationId: string, isActive: boolean) {
+const toggleActive = (stationId: string, isActive: boolean) => {
   if (!branch.activeBranchId) return
-  error.value = null
-  try {
-    await kitchen.updateStation(branch.activeBranchId, stationId, { is_active: isActive })
-  } catch {
-    error.value = 'No se pudo actualizar la estación.'
-  }
+  const branchId = branch.activeBranchId
+  return run(
+    () => kitchen.updateStation(branchId, stationId, { is_active: isActive }),
+    'No se pudo actualizar la estación.',
+  )
 }
 
-// --- Product → station mapping ---------------------------------------------
-const productId = ref<string | null>(null)
-const mapStationId = ref<string | null>(null)
-const mapRole = ref('')
-const mapping = ref(false)
-
-const productOptions = computed(() => menu.products.map((p) => ({ label: p.name, value: p.id })))
-const stationOptions = computed(() => kitchen.stations.map((s) => ({ label: s.name, value: s.id })))
-const stationName = (id: string) => kitchen.stations.find((s) => s.id === id)?.name ?? id
-const currentMappings = computed(() =>
-  productId.value ? kitchen.stationsForProduct(productId.value) : [],
-)
-
-watch(productId, (id) => {
-  if (id) void kitchen.loadProductStations(id)
-})
-
-async function attach() {
-  if (!productId.value || !mapStationId.value) return
-  mapping.value = true
-  error.value = null
-  try {
-    await kitchen.attachProduct(productId.value, mapStationId.value, mapRole.value.trim() || null)
-    mapStationId.value = null
-    mapRole.value = ''
-  } catch {
-    error.value = 'No se pudo asociar el producto a la estación.'
-  } finally {
-    mapping.value = false
-  }
+const rename = (stationId: string, name: string) => {
+  const trimmed = name.trim()
+  if (!branch.activeBranchId || !trimmed) return
+  const branchId = branch.activeBranchId
+  return run(
+    () => kitchen.updateStation(branchId, stationId, { name: trimmed }),
+    'No se pudo renombrar la estación.',
+  )
 }
 
-async function detach(stationId: string) {
-  if (!productId.value) return
-  error.value = null
-  try {
-    await kitchen.detachProduct(productId.value, stationId)
-  } catch {
-    error.value = 'No se pudo quitar la asociación.'
-  }
+/** Intercambia la posición con la vecina: dos escrituras, ningún hueco en la numeración. */
+function move(index: number, delta: -1 | 1) {
+  const branchId = branch.activeBranchId
+  const list = ordered.value
+  const current = list[index]
+  const neighbour = list[index + delta]
+  if (!branchId || !current || !neighbour) return
+  return run(async () => {
+    await kitchen.updateStation(branchId, current.id, { position: neighbour.position })
+    await kitchen.updateStation(branchId, neighbour.id, { position: current.position })
+  }, 'No se pudo reordenar.')
 }
 
-// --- Mapping editor: role + itemized station tasks ---------------------------
-// Tasks are what the board's component lists as sub-lines ("Carne de hamburguesa",
-// "Tocineta ahumada"). Tickets already fired keep the tasks captured at routing time.
-const MAX_TASKS = 10
-const editingId = ref<string | null>(null)
-const editRole = ref('')
-const editTasks = ref<string[]>([])
-const newTask = ref('')
-const savingEdit = ref(false)
-
-function startEdit(m: ProductStation) {
-  editingId.value = m.id
-  editRole.value = m.role ?? ''
-  editTasks.value = [...m.tasks]
-  newTask.value = ''
-}
-function cancelEdit() {
-  editingId.value = null
-}
-function addTask() {
-  const task = newTask.value.trim()
-  if (!task || editTasks.value.length >= MAX_TASKS) return
-  editTasks.value.push(task)
-  newTask.value = ''
-}
-function removeTask(index: number) {
-  editTasks.value.splice(index, 1)
-}
-async function saveEdit() {
-  if (!productId.value || !editingId.value) return
-  savingEdit.value = true
-  error.value = null
-  try {
-    await kitchen.updateMapping(productId.value, editingId.value, {
-      role: editRole.value.trim() || null,
-      tasks: editTasks.value,
-    })
-    editingId.value = null
-  } catch {
-    error.value = 'No se pudo actualizar la asignación.'
-  } finally {
-    savingEdit.value = false
-  }
-}
-
-const editingMapping = computed(() =>
-  editingId.value ? (currentMappings.value.find((m) => m.id === editingId.value) ?? null) : null,
-)
-
-// Close the editor if the selected product changes underneath it.
-watch(productId, () => {
-  editingId.value = null
-})
+// --- Lo que falta ------------------------------------------------------------
+// Un plato sin estación es invisible: se ve normal en la carta y sólo deja de existir cuando la
+// cocina debería haberlo recibido, con el pedido ya cobrado. Por eso la pantalla ARRANCA por lo
+// pendiente en vez de esperar a que alguien piense en revisarlo.
+const pending = computed(() => kitchen.unroutableProducts)
 
 onMounted(() => {
-  if (!menu.products.length) void menu.fetchProducts()
+  void kitchen.loadUnroutableProducts().catch(() => undefined)
 })
 </script>
 
@@ -157,41 +113,122 @@ onMounted(() => {
       {{ error }}
     </p>
 
-    <!-- Stations -->
-    <section class="rounded-xl border border-line p-4">
-      <h2 class="mb-3 font-mono text-[11px] uppercase tracking-[0.16em] text-ember">Estaciones</h2>
-
-      <ul v-if="kitchen.stations.length" class="mb-4 flex flex-col gap-1.5">
+    <!-- Pendiente primero: es lo único de esta pantalla que se está cobrando ahora mismo -->
+    <section v-if="pending.length" class="rounded-xl border border-alert/40 bg-alert/5 p-4">
+      <h2 class="font-mono text-[11px] uppercase tracking-[0.16em] text-alert">
+        Platos que nadie prepara · {{ pending.length }}
+      </h2>
+      <p class="mt-1 text-[12px] leading-snug text-steel-600">
+        Sin estación no llegan a la cocina. Se asignan desde la carta, junto al plato.
+      </p>
+      <ul class="mt-3 flex flex-col gap-1.5">
         <li
-          v-for="s in kitchen.stations"
-          :key="s.id"
-          class="flex items-center justify-between gap-3 rounded-lg border border-line bg-app px-3 py-2"
+          v-for="p in pending"
+          :key="p.product_id"
+          class="flex items-center justify-between gap-3 rounded-lg border border-line bg-paper px-3 py-2"
         >
           <span class="min-w-0">
-            <span class="block truncate text-sm text-ink">{{ s.name }}</span>
-            <span class="font-mono text-[11px] text-steel-500">posición {{ s.position }}</span>
+            <span class="block truncate text-sm text-ink">{{ p.name }}</span>
+            <span class="font-mono text-[11px] text-steel-500">
+              {{ p.category_name ?? 'sin categoría' }}
+              <template v-if="p.active_variants">
+                · {{ p.active_variants }} a la venta
+              </template>
+              <template v-else> · sin variantes activas</template>
+            </span>
           </span>
+          <!-- Lo urgente es lo que ya se vende; lo demás es una ficha a medio crear. -->
+          <span
+            v-if="p.active_variants"
+            class="shrink-0 rounded-full bg-alert/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-alert"
+          >
+            se vende
+          </span>
+        </li>
+      </ul>
+      <RouterLink
+        :to="{ name: 'menu' }"
+        class="mt-3 inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-ember transition hover:text-ink"
+      >
+        Ir a la carta a asignarlas
+        <i class="pi pi-arrow-right text-[10px]" />
+      </RouterLink>
+    </section>
+
+    <!-- Estaciones -->
+    <section class="rounded-xl border border-line p-4">
+      <h2 class="font-mono text-[11px] uppercase tracking-[0.16em] text-ember">
+        Estaciones de esta sede
+      </h2>
+      <p class="mt-1 text-[12px] leading-snug text-steel-500">
+        El orden es el del pase: la primera de la lista es la primera del tablero.
+      </p>
+
+      <ul v-if="ordered.length" class="mt-3 mb-4 flex flex-col gap-1.5">
+        <li
+          v-for="(s, i) in ordered"
+          :key="s.id"
+          class="flex items-center gap-2 rounded-lg border border-line bg-app px-3 py-2"
+          data-station-row
+        >
+          <span class="flex shrink-0 flex-col">
+            <button
+              type="button"
+              class="text-steel-400 transition hover:text-ink disabled:opacity-25"
+              :disabled="busy || i === 0"
+              :aria-label="`Subir ${s.name}`"
+              data-move-up
+              @click="move(i, -1)"
+            >
+              <i class="pi pi-chevron-up text-[9px]" />
+            </button>
+            <button
+              type="button"
+              class="text-steel-400 transition hover:text-ink disabled:opacity-25"
+              :disabled="busy || i === ordered.length - 1"
+              :aria-label="`Bajar ${s.name}`"
+              data-move-down
+              @click="move(i, 1)"
+            >
+              <i class="pi pi-chevron-down text-[9px]" />
+            </button>
+          </span>
+          <input
+            :value="s.name"
+            :disabled="busy"
+            maxlength="100"
+            class="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1.5 py-1 text-sm text-ink transition hover:border-line focus:border-line disabled:opacity-60"
+            :aria-label="`Nombre de ${s.name}`"
+            data-station-name
+            @change="rename(s.id, ($event.target as HTMLInputElement).value)"
+          />
           <span class="flex shrink-0 items-center gap-2">
             <span class="font-mono text-[10px] uppercase tracking-wide text-steel-500">
-              {{ s.is_active ? 'activa' : 'inactiva' }}
+              {{ s.is_active ? 'en servicio' : 'apagada' }}
             </span>
             <ToggleSwitch
               :model-value="s.is_active"
+              :aria-label="`Poner ${s.name} en servicio`"
               @update:model-value="(v: boolean) => toggleActive(s.id, v)"
             />
           </span>
         </li>
       </ul>
-      <p v-else class="mb-4 text-sm text-steel-500">Sin estaciones.</p>
+      <p v-else class="mt-3 mb-4 text-sm text-steel-500">
+        Todavía no hay estaciones. Crea las de tu línea — parrilla, fríos, bebidas — y el tablero
+        del pase se arma solo con ellas.
+      </p>
 
       <div class="flex items-end gap-2">
         <div class="flex flex-1 flex-col gap-1">
-          <label for="st-name" class="text-xs text-steel-500">Nombre</label>
-          <InputText id="st-name" v-model="newName" fluid />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label for="st-pos" class="text-xs text-steel-500">Posición</label>
-          <InputNumber v-model="newPosition" input-id="st-pos" :min="0" class="w-24" />
+          <label for="st-name" class="text-xs text-steel-500">Nueva estación</label>
+          <InputText
+            id="st-name"
+            v-model="newName"
+            placeholder="Parrilla"
+            fluid
+            @keyup.enter="createStation"
+          />
         </div>
         <Button
           label="Crear"
@@ -201,153 +238,6 @@ onMounted(() => {
           :disabled="newName.trim() === ''"
           @click="createStation"
         />
-      </div>
-    </section>
-
-    <!-- Product → station mapping -->
-    <section class="rounded-xl border border-line p-4">
-      <h2 class="mb-3 font-mono text-[11px] uppercase tracking-[0.16em] text-ember">
-        Productos por estación
-      </h2>
-
-      <div class="mb-3 flex flex-col gap-2">
-        <Select
-          v-model="productId"
-          :options="productOptions"
-          option-label="label"
-          option-value="value"
-          placeholder="Producto"
-          filter
-          fluid
-        />
-        <div class="flex items-end gap-2">
-          <Select
-            v-model="mapStationId"
-            :options="stationOptions"
-            option-label="label"
-            option-value="value"
-            placeholder="Estación"
-            :disabled="!productId"
-            fluid
-          />
-          <InputText
-            v-model="mapRole"
-            placeholder="Rol (opcional)"
-            maxlength="60"
-            :disabled="!productId"
-            fluid
-          />
-          <Button
-            label="Asociar"
-            size="small"
-            icon="pi pi-link"
-            :loading="mapping"
-            :disabled="!productId || !mapStationId"
-            @click="attach"
-          />
-        </div>
-      </div>
-
-      <div v-if="productId" class="flex flex-wrap gap-1.5">
-        <span
-          v-for="m in currentMappings"
-          :key="m.id"
-          class="flex items-center gap-1.5 rounded-full border border-ember/40 bg-ember/5 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-ember"
-        >
-          {{ stationName(m.kitchen_station_id) }}
-          <span v-if="m.role" class="text-ember/60 normal-case">· {{ m.role }}</span>
-          <span v-if="m.tasks.length" class="text-ember/60 normal-case">
-            · {{ m.tasks.length }} tarea{{ m.tasks.length === 1 ? '' : 's' }}
-          </span>
-          <button
-            type="button"
-            aria-label="Editar tareas"
-            class="text-ember/70 transition hover:text-ink"
-            @click="startEdit(m)"
-          >
-            <i class="pi pi-pencil text-[10px]" />
-          </button>
-          <button
-            type="button"
-            aria-label="Quitar estación"
-            class="text-ember/70 transition hover:text-alert"
-            @click="detach(m.kitchen_station_id)"
-          >
-            <i class="pi pi-times text-[10px]" />
-          </button>
-        </span>
-        <span v-if="!currentMappings.length" class="font-mono text-[11px] text-steel-500">
-          Este producto no tiene estaciones asociadas.
-        </span>
-      </div>
-
-      <!-- Mapping editor: role + itemized tasks the board lists under the component -->
-      <div
-        v-if="editingMapping"
-        class="mt-3 flex flex-col gap-3 rounded-xl border border-ember/30 bg-ember/[0.04] p-3"
-      >
-        <p class="font-mono text-[10px] uppercase tracking-[0.16em] text-ember">
-          {{ stationName(editingMapping.kitchen_station_id) }} — rol y tareas
-        </p>
-
-        <div class="flex flex-col gap-1">
-          <label for="map-edit-role" class="text-xs text-steel-500">Rol (nombre del componente)</label>
-          <InputText id="map-edit-role" v-model="editRole" maxlength="60" fluid />
-        </div>
-
-        <div class="flex flex-col gap-1.5">
-          <span class="text-xs text-steel-500">Tareas (lo que esta estación hace para el plato)</span>
-          <ul v-if="editTasks.length" class="flex flex-col gap-1">
-            <li
-              v-for="(task, i) in editTasks"
-              :key="i"
-              class="flex items-center justify-between gap-2 rounded-lg border border-line bg-app px-2.5 py-1.5"
-            >
-              <span class="min-w-0 truncate font-mono text-[12px] text-ink">· {{ task }}</span>
-              <button
-                type="button"
-                aria-label="Quitar tarea"
-                class="shrink-0 text-steel-500 transition hover:text-alert"
-                @click="removeTask(i)"
-              >
-                <i class="pi pi-times text-[10px]" />
-              </button>
-            </li>
-          </ul>
-          <div class="flex items-center gap-2">
-            <InputText
-              v-model="newTask"
-              placeholder="p. ej. Tocineta ahumada"
-              maxlength="60"
-              :disabled="editTasks.length >= MAX_TASKS"
-              fluid
-              @keyup.enter="addTask"
-            />
-            <Button
-              label="Agregar"
-              size="small"
-              icon="pi pi-plus"
-              severity="secondary"
-              :disabled="newTask.trim() === '' || editTasks.length >= MAX_TASKS"
-              @click="addTask"
-            />
-          </div>
-          <p class="font-mono text-[10px] text-steel-500">
-            Máx. {{ MAX_TASKS }} tareas. Las comandas ya enviadas conservan sus tareas; los
-            cambios aplican a lo que se rutee de aquí en adelante.
-          </p>
-        </div>
-
-        <div class="flex justify-end gap-2">
-          <Button label="Cancelar" size="small" severity="secondary" text @click="cancelEdit" />
-          <Button
-            label="Guardar"
-            size="small"
-            icon="pi pi-check"
-            :loading="savingEdit"
-            @click="saveEdit"
-          />
-        </div>
       </div>
     </section>
   </div>

@@ -71,6 +71,15 @@ function compTimer(c: KdsComponent): string | null {
           {{ item.modifiers.join(' · ') }}
         </p>
 
+        <!-- Kitchen note: the cook must not miss "sin lechuga". Plain text, heat-lamp ember. -->
+        <p
+          v-if="item.note"
+          class="mt-1 flex items-start gap-1.5 rounded-md border-l-4 border-ember bg-ember/10 px-2 py-1 text-[12px] font-bold uppercase leading-tight tracking-wide text-ember-600"
+        >
+          <span aria-hidden="true">⚠</span>
+          <span class="min-w-0">{{ item.note }}</span>
+        </p>
+
         <!-- Controls: recipe (hidden until a backend source exists) + expand -->
         <div class="mt-1 flex items-center gap-2">
           <button

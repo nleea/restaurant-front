@@ -6,6 +6,10 @@
 // beat: it glows (heat-warm/heat-hot) when the drawer doesn't square. Closing an
 // open shift counts the drawer by denomination with the difference updating live.
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
+import { detailOf } from '@/lib/apiError'
+import * as ordersApi from '@/services/orders.api'
+import type { OrderRefund } from '@/services/orders.api'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import AppShell from '@/components/AppShell.vue'
@@ -18,7 +22,7 @@ import { copShort } from '@/lib/cop'
 import { useAuthStore } from '@/stores/auth'
 import { useBranchStore } from '@/stores/branch'
 import * as cashApi from '@/services/cash.api'
-import type { CashSession } from '@/services/cash.api'
+import type { CashSession, ShiftPending } from '@/services/cash.api'
 import * as financeApi from '@/services/finance.api'
 import type { Expense as ApiExpense } from '@/services/finance.api'
 import { useFinanceStore } from '@/stores/finance'
@@ -26,6 +30,7 @@ import CategoriesArea from '@/components/finance/CategoriesArea.vue'
 import { getMyEmployee } from '@/services/staff.api'
 import {
   getZReport,
+  getShiftRecord,
   getRevenue,
   getDaily,
   getTopProducts,
@@ -36,6 +41,7 @@ import {
 } from '@/services/reports.api'
 import type {
   ZReport,
+  ShiftRecord,
   RevenueSummary,
   DailyPoint,
   TopProductRow,
@@ -215,6 +221,19 @@ async function loadZ(shift: SessionShift): Promise<void> {
   }
 }
 
+// The selected shift's operational record (orders + deliveries) — history beside the Z, for
+// cruces. Best-effort: a failure leaves it null (the Z still shows). Only for closed shifts.
+const record = ref<ShiftRecord | null>(null)
+async function loadRecord(shift: SessionShift): Promise<void> {
+  record.value = null
+  if (shift.status !== 'closed') return
+  try {
+    record.value = await getShiftRecord(shift.id)
+  } catch {
+    record.value = null
+  }
+}
+
 async function loadSessions(): Promise<void> {
   zError.value = null
   await branch.ensureLoaded()
@@ -228,7 +247,10 @@ async function loadSessions(): Promise<void> {
   }
   const firstClosed = shifts.value.find((s) => s.status === 'closed')
   selectedId.value = firstClosed?.id ?? shifts.value[0]?.id ?? ''
-  if (firstClosed) await loadZ(firstClosed)
+  if (firstClosed) {
+    await loadZ(firstClosed)
+    void loadRecord(firstClosed)
+  }
 }
 onMounted(loadSessions)
 watch(() => branch.activeBranchId, loadSessions)
@@ -250,7 +272,10 @@ const selected = computed<SessionShift | null>(
 async function select(id: string) {
   selectedId.value = id
   const s = shifts.value.find((x) => x.id === id)
-  if (s) await loadZ(s)
+  if (s) {
+    await loadZ(s)
+    void loadRecord(s)
+  }
 }
 
 type DiffTone = 'ok' | 'minor' | 'alert'
@@ -767,6 +792,18 @@ const closeDiff = computed<number | null>(() =>
   closeExpected.value != null ? countedTotal.value - closeExpected.value : null,
 )
 const closeBusy = ref(false)
+// Motivo por el que el backend rechazó el cierre. Se muestra dentro del propio diálogo:
+// nombra los domicilios sin resolver, que es lo único accionable.
+const closeError = ref<string | null>(null)
+// Deudas de devolución abiertas del turno. Informativas: no bloquean.
+const refunds = ref<OrderRefund[]>([])
+
+// Pre-close summary: uncollected orders + unresolved deliveries this shift.
+const pending = ref<ShiftPending | null>(null)
+// Sólo los domicilios sin resolver bloquean el cierre; los pedidos sin cobrar informan y ya.
+// Sin override: la salida es resolver la entrega diciendo qué pasó, no saltarse el aviso.
+// El backend rechaza igual, así que esto sólo evita el viaje.
+const closeBlocked = computed(() => (pending.value?.undelivered_count ?? 0) > 0)
 
 function startClose(s: SessionShift) {
   closeShift.value = s
@@ -774,12 +811,26 @@ function startClose(s: SessionShift) {
   closeNote.value = ''
   hadIncident.value = false
   incidentText.value = ''
+  pending.value = null
   for (const k of Object.keys(counts)) delete counts[Number(k)]
+  closeError.value = null
   closeOpen.value = true
+  // Best-effort: a failed pending fetch leaves the summary hidden, never blocking the close.
+  cashApi.getSessionPending(s.session.id).then(
+    (p) => (pending.value = p),
+    () => (pending.value = null),
+  )
+  // Devoluciones pendientes: se muestran al cerrar como información. La plata está en el
+  // banco, no en el cajón, así que el arqueo cuadra igual — nunca traban el cierre.
+  refunds.value = []
+  ordersApi.listRefunds(s.session.branch_id, 'pending').then(
+    (r) => (refunds.value = r),
+    () => (refunds.value = []),
+  )
 }
 async function confirmClose() {
   const s = closeShift.value
-  if (!s) return
+  if (!s || closeBlocked.value) return
   closeBusy.value = true
   try {
     await cashApi.closeSession(s.session.id, {
@@ -790,8 +841,12 @@ async function confirmClose() {
     await loadSessions()
     await select(s.id)
     flash('Turno cerrado')
-  } catch {
-    flash('No se pudo cerrar el turno')
+  } catch (e) {
+    // El backend rechaza el cierre nombrando los domicilios sin resolver. Ese detalle es
+    // accionable — "no se pudo cerrar el turno" no lo es —, así que se muestra tal cual y
+    // el diálogo se queda abierto para que el cajero pueda ir a resolverlos.
+    closeError.value =
+      detailOf(e) ?? 'No se pudo cerrar el turno. Intenta de nuevo.'
   } finally {
     closeBusy.value = false
   }
@@ -978,6 +1033,32 @@ async function confirmClose() {
               <div class="docket-perf h-[7px] rotate-180" aria-hidden="true" />
             </article>
             </template>
+
+            <!-- Registros del turno: the operational record beside the Z (cruces). -->
+            <div
+              v-if="record && (record.orders.length || record.deliveries.length)"
+              class="no-print card flex w-full max-w-[420px] flex-col gap-3 p-4"
+            >
+              <p class="eyebrow">Registros del turno</p>
+              <div v-if="record.orders.length" class="flex flex-col gap-1">
+                <p class="text-[11px] uppercase tracking-wide text-steel-500">Pedidos ({{ record.orders.length }})</p>
+                <ul class="flex flex-col gap-1 font-mono text-[12px]">
+                  <li v-for="o in record.orders" :key="o.id" class="flex justify-between gap-2 text-steel-600">
+                    <span class="truncate">{{ o.channel }} · {{ o.status }}</span>
+                    <b class="tabular-nums text-ink">{{ cop(Number(o.total)) }}</b>
+                  </li>
+                </ul>
+              </div>
+              <div v-if="record.deliveries.length" class="flex flex-col gap-1">
+                <p class="text-[11px] uppercase tracking-wide text-steel-500">Domicilios ({{ record.deliveries.length }})</p>
+                <ul class="flex flex-col gap-1 font-mono text-[12px]">
+                  <li v-for="(d, i) in record.deliveries" :key="i" class="flex justify-between gap-2 text-steel-600">
+                    <span class="truncate">{{ d.address_text }}</span>
+                    <span class="tabular-nums">{{ d.delivery_status }}</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -1406,12 +1487,77 @@ async function confirmClose() {
           <div v-if="closeDiff != null" class="flex justify-between font-bold" :class="closeDiff < 0 ? 'text-alert-600' : closeDiff > 0 ? 'text-warn-600' : 'text-success-600'"><span>Diferencia</span><span class="tabular-nums">{{ copSigned(closeDiff) }}</span></div>
         </div>
         <p class="rounded-lg bg-alert/10 px-3 py-2 text-[12px] text-alert-600"><i class="pi pi-exclamation-triangle text-[10px]" /> Al cerrar, el turno queda bloqueado. Esta acción no se puede deshacer.</p>
+
+        <!-- Domicilios sin resolver: bloquean, y no se ofrece salida. La salida es resolver
+             la entrega diciendo qué pasó, que siempre se puede (marcar "no entregada" se
+             acepta desde cualquier estado). Un "cerrar de todos modos" competiría con la
+             acción correcta, y a las 11pm ganaría siempre. -->
+        <div
+          v-if="pending && pending.undelivered_count > 0"
+          class="flex flex-col gap-2 rounded-lg border border-alert/40 bg-alert/10 p-3 text-[12px]"
+          data-close-blocked
+        >
+          <p class="font-semibold text-alert-600">
+            <i class="pi pi-lock text-[10px]" />
+            No se puede cerrar: {{ pending.undelivered_count }} domicilio(s) sin resolver
+          </p>
+          <p class="text-steel-600">
+            Márcalos como entregados o no entregados en Despacho. Si el domiciliario no pudo
+            entregar, "no entregado" con su motivo también los resuelve.
+          </p>
+          <RouterLink
+            to="/dispatch"
+            class="mt-0.5 self-start rounded-lg border border-alert/40 px-2.5 py-1 font-medium text-alert-600 transition hover:bg-alert/10"
+          >
+            Ir a Despacho
+          </RouterLink>
+        </div>
+
+        <!-- Pedidos sin cobrar: sólo informativo. Nunca bloquearon y siguen sin hacerlo. -->
+        <div
+          v-if="pending && pending.uncollected_count > 0"
+          class="flex flex-col gap-1 rounded-lg border border-warn/40 bg-warn/10 p-3 text-[12px]"
+        >
+          <p class="font-semibold text-warn-600">
+            <i class="pi pi-exclamation-triangle text-[10px] mr-1" />{{ pending.uncollected_count }}
+            pedido(s) sin cobrar ({{ cop(Number(pending.uncollected_total)) }})
+          </p>
+          <p class="text-steel-600">No impiden cerrar, pero quedarán así en el registro.</p>
+        </div>
+
+        <div
+          v-if="refunds.length"
+          class="flex flex-col gap-1.5 rounded-lg border border-line bg-sunken p-3 text-[12px]"
+          data-pending-refunds
+        >
+          <p class="font-semibold text-ink">
+            <i class="pi pi-reply text-[10px] mr-1" />{{ refunds.length }} devolución(es) por hacer
+          </p>
+          <ul class="flex flex-col gap-0.5 text-steel-600">
+            <li v-for="r in refunds" :key="r.id" class="flex justify-between gap-2">
+              <span class="font-mono">{{ r.method }}</span>
+              <span class="font-mono tabular-nums">{{ cop(Number(r.amount)) }}</span>
+            </li>
+          </ul>
+          <p class="text-steel-500">
+            No impiden cerrar: ese dinero salió por banco, no del cajón. Quedan pendientes
+            hasta que alguien las haga.
+          </p>
+        </div>
+
+        <p
+          v-if="closeError"
+          role="alert"
+          class="rounded-lg border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[11px] text-alert-600"
+        >
+          {{ closeError }}
+        </p>
       </div>
 
       <template #footer>
         <Button v-if="step > 1" label="Atrás" text severity="secondary" @click="step--" />
         <Button v-if="step < 3" label="Continuar" icon="pi pi-arrow-right" icon-pos="right" @click="step++" />
-        <Button v-else label="Cerrar turno definitivamente" icon="pi pi-lock" severity="danger" :loading="closeBusy" @click="confirmClose" />
+        <Button v-else label="Cerrar turno definitivamente" icon="pi pi-lock" severity="danger" :loading="closeBusy" :disabled="closeBlocked" @click="confirmClose" />
       </template>
     </Dialog>
 

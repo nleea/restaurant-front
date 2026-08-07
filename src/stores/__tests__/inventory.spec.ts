@@ -229,4 +229,68 @@ describe('inventory store', () => {
     })
     expect(inv.ingredientLabel('i1')).toBe('Tomate chonto')
   })
+
+  it('indexes an ingredient default station so the editor can prefill it', async () => {
+    apiMock.listStock.mockResolvedValue([stock('i1', '3.000', '5.000')])
+    recipesMock.listIngredients.mockResolvedValue([
+      {
+        id: 'i1',
+        name: 'Carne',
+        unit_of_measure_id: 'u-kg',
+        is_active: true,
+        default_station_id: 'st-parrilla',
+      },
+    ])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+    expect(inv.ingredientInfo('i1')?.defaultStationId).toBe('st-parrilla')
+  })
+
+  it('leaves the station null when the ingredient has none', async () => {
+    apiMock.listStock.mockResolvedValue([stock('i1', '3.000', '5.000')])
+    recipesMock.listIngredients.mockResolvedValue([
+      { id: 'i1', name: 'Sal', unit_of_measure_id: 'u-kg', is_active: true },
+    ])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+    expect(inv.ingredientInfo('i1')?.defaultStationId).toBeNull()
+  })
+
+  it('createInsumo forwards the chosen station', async () => {
+    apiMock.listStock.mockResolvedValue([])
+    recipesMock.listIngredients.mockResolvedValue([])
+    recipesMock.createIngredient.mockResolvedValue({ id: 'i9', name: 'Carne' })
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+
+    await inv.createInsumo({
+      name: 'Carne',
+      category: null,
+      unitOfMeasureId: 'u-kg',
+      defaultStationId: 'st-parrilla',
+      initialQuantity: null,
+      minStock: null,
+      employeeId: null,
+    })
+
+    expect(recipesMock.createIngredient).toHaveBeenCalledWith({
+      name: 'Carne',
+      category: null,
+      unit_of_measure_id: 'u-kg',
+      default_station_id: 'st-parrilla',
+    })
+  })
+
+  it('clearing the station sends an explicit null, not an omitted key', async () => {
+    apiMock.listStock.mockResolvedValue([])
+    recipesMock.listIngredients.mockResolvedValue([])
+    const inv = useInventoryStore()
+    await inv.loadBranch('b1')
+
+    await inv.updateInsumo('i1', { default_station_id: null })
+
+    expect(recipesMock.updateIngredient).toHaveBeenCalledWith('i1', {
+      default_station_id: null,
+    })
+  })
 })

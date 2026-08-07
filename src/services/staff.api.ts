@@ -15,6 +15,12 @@ export interface Employee {
   role_id: string
   hired_at: string | null
   is_active: boolean
+  /** A dónde le escribe el sistema. Hoy sólo lo usan las alertas escaladas por WhatsApp. */
+  phone?: string | null
+  /** Si quiere recibir ese aviso. Elección explícita, distinta de tener el permiso. */
+  receives_alerts?: boolean
+  /** El chat de WhatsApp con el que se le corresponde. `null` = sin emparejar. */
+  whatsapp_contact_id?: string | null
 }
 
 export type ShiftStatus = 'scheduled' | 'day_off' | 'covered' | 'manual'
@@ -96,6 +102,36 @@ export async function provisionUser(input: ProvisionUserInput): Promise<Provisio
   return (await http.post<ProvisionedUser>('/rbac/users', input)).data
 }
 
+/**
+ * Fija el teléfono de contacto del empleado; vacío lo borra.
+ *
+ * Se manda tal y como lo escribió la persona: el servidor lo normaliza antes de guardarlo,
+ * porque es lo que después se compara con el número que manda WhatsApp.
+ */
+export async function setEmployeePhone(
+  employeeId: string,
+  phone: string | null,
+): Promise<Employee> {
+  return (await http.patch<Employee>(`/staff/employees/${employeeId}/phone`, { phone })).data
+}
+
+/**
+ * Señala (o deja de señalar) a esta persona para recibir alertas escaladas por WhatsApp.
+ *
+ * Es una elección, no un permiso: ver el panel de alertas y que le suene el móvil a las once
+ * de la noche son cosas distintas, y antes estaban atadas al mismo `alerts.read`.
+ */
+export async function setAlertSubscription(
+  employeeId: string,
+  receivesAlerts: boolean,
+): Promise<Employee> {
+  return (
+    await http.patch<Employee>(`/staff/employees/${employeeId}/alert-subscription`, {
+      receives_alerts: receivesAlerts,
+    })
+  ).data
+}
+
 // --- Employees -----------------------------------------------------------------------------
 export async function listEmployees(params: {
   branchId?: string
@@ -142,6 +178,11 @@ export async function updateEmployeeRole(id: string, roleId: string): Promise<Em
 
 export async function deactivateEmployee(id: string): Promise<Employee> {
   return (await http.delete<Employee>(`/staff/employees/${id}`)).data
+}
+
+// Reactivation is a POST verb rather than the inverse of the DELETE above — see the router.
+export async function activateEmployee(id: string): Promise<Employee> {
+  return (await http.post<Employee>(`/staff/employees/${id}/activate`)).data
 }
 
 // --- Planned shifts ------------------------------------------------------------------------

@@ -1,17 +1,26 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { getAccessToken, getRefreshToken, setTokens, clearTokens } from './tokens'
 
-// --- baseURL: derived from the browser Host so the tenant subdomain rides along ----------
-// Dev: app runs at demo.localhost:5173 -> API at demo.localhost:8000 (tenant = "demo").
-// There is no tenant_id in any request body. An explicit VITE_API_BASE_URL overrides this.
+// --- baseURL: same origin, under /api ----------------------------------------------------
+// The API is served from the SAME host as the app, under `/api` (dev: Vite proxies it to
+// :8000; deployed: the tunnel routes `/api/*` to the backend). That is not a deployment
+// detail — the backend resolves the tenant from the Host subdomain, so the app and its API
+// MUST share a hostname, and sharing one without a prefix is impossible: fourteen SPA routes
+// (`/menu`, `/orders`, `/inventory`, …) are named exactly like fourteen API prefixes.
+//
+// Being relative is what makes it multi-tenant for free: at demo.wsquote.uk the requests go
+// to demo.wsquote.uk, at otro.wsquote.uk they go to otro.wsquote.uk. An absolute URL would
+// be a single host for every tenant — i.e. one business's customers hitting another's data.
+// There is no tenant_id in any request body.
+//
+// VITE_API_BASE_URL still overrides, for the case where the API genuinely lives elsewhere.
+// It is an escape hatch, not the normal path: set it and you own the tenant problem above.
 function resolveBaseURL(): string {
-  // Prioridad: runtime (env.js del pod) -> build-time (VITE_*) -> host del navegador.
+  // Prioridad: runtime (env.js del pod) -> build-time (VITE_*) -> mismo origen.
   const runtime = window.__ENV__ ?? {}
   const override = runtime.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE_URL
   if (override) return override
-  const { protocol, hostname } = window.location
-  const port = runtime.VITE_API_PORT || import.meta.env.VITE_API_PORT || '8000'
-  return `${protocol}//${hostname}:${port}`
+  return '/api'
 }
 
 export const baseURL = resolveBaseURL()

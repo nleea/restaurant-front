@@ -29,7 +29,12 @@ export interface CashMovement {
   concept: string
   amount: string
   method: string
+  // "entry" | "withdrawal" | "expense" | "sale" | "other".
+  category: string
+  created_at: string
   reference_id: string | null
+  /** La cuenta de mesa que produjo el movimiento, si la hubo. La deriva el servidor. */
+  table_bill_id?: string | null
 }
 
 export interface OpenSessionInput {
@@ -41,6 +46,9 @@ export interface OpenSessionInput {
 export interface CloseSessionInput {
   closed_by_employee_id: string
   counted_amount: string
+  notes?: string
+  incident?: boolean
+  incident_note?: string
 }
 
 export interface RegisterMovementInput {
@@ -48,7 +56,32 @@ export interface RegisterMovementInput {
   concept: string
   amount: string
   method: string
+  category?: string
   reference_id?: string | null
+}
+
+// --- Shift summary (Reporte Z / arqueo) ----------------------------------------------------
+export interface CashSummaryChannel {
+  channel: string
+  amount: string
+  tickets: number
+}
+
+export interface CashSummaryPayment {
+  method: string
+  amount: string
+}
+
+export interface CashShiftSummary {
+  cash_session_id: string
+  status: string
+  sales_total: string
+  tickets: number
+  avg_ticket: string
+  channels: CashSummaryChannel[]
+  payments: CashSummaryPayment[]
+  withdrawals: string
+  expected_cash: string
 }
 
 // --- Sessions ------------------------------------------------------------------------------
@@ -68,6 +101,22 @@ export async function getOpenSession(branchId: string): Promise<CashSession> {
 
 export async function getSession(sessionId: string): Promise<CashSession> {
   return (await http.get<CashSession>(`/cash/sessions/${sessionId}`)).data
+}
+
+export async function getSessionSummary(sessionId: string): Promise<CashShiftSummary> {
+  return (await http.get<CashShiftSummary>(`/cash/sessions/${sessionId}/summary`)).data
+}
+
+// Advisory pre-close summary: what's still uncollected/undelivered this shift. Never blocks a close.
+export interface ShiftPending {
+  cash_session_id: string
+  uncollected_count: number
+  uncollected_total: string
+  undelivered_count: number
+}
+
+export async function getSessionPending(sessionId: string): Promise<ShiftPending> {
+  return (await http.get<ShiftPending>(`/cash/sessions/${sessionId}/pending`)).data
 }
 
 export async function closeSession(

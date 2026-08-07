@@ -13,8 +13,20 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Copy the rest and build. VITE_* vars are baked at build time — pass with
-#   docker build --build-arg VITE_API_BASE_URL=https://api.example.com ...
+# Copy the rest and build. VITE_* vars are baked at build time.
+#
+# NORMALLY LEAVE `VITE_API_BASE_URL` UNSET. Unset, the app calls the API at the relative
+# `/api` on its own host, which is the only thing that works multi-tenant: the backend reads
+# the tenant from the Host subdomain, so the app and its API must share a hostname (the tunnel
+# is already wired that way — one hostname per tenant, split by path).
+#
+# Baking an absolute host here is worse than setting it at runtime, because it OUTRANKS the
+# runtime value: `resolveBaseURL` reads env.js first, but an empty runtime value falls through
+# to this one. Every tenant's browser would then call the same host, and the backend would
+# resolve the tenant from THAT host — serving the wrong business, or none.
+#
+# Only pass it if the API genuinely lives on another host and you have solved the tenant
+# problem yourself:  docker build --build-arg VITE_API_BASE_URL=https://api.example.com ...
 ARG VITE_API_BASE_URL
 ARG VITE_API_PORT
 COPY . .

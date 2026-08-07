@@ -3,11 +3,14 @@ import * as api from '@/services/cash.api'
 import type {
   CashMovement,
   CashSession,
+  CashShiftSummary,
   CloseSessionInput,
   OpenSessionInput,
   RegisterMovementInput,
 } from '@/services/cash.api'
-import { statusOf } from '@/lib/apiError'
+import * as ordersApi from '@/services/orders.api'
+import type { OrderRefund } from '@/services/orders.api'
+import { detailOf, statusOf } from '@/lib/apiError'
 
 // Decimals travel as strings ("23900.00"); the only client-side arithmetic is the running
 // expected cash, summed in integer cents so repeated parse/accumulate never drifts. The
@@ -31,11 +34,19 @@ interface CashState {
   // The active branch's open session (or none) and its movements.
   currentSession: CashSession | null
   currentMovements: CashMovement[]
+  // The open session's shift summary (Reporte Z figures). Null when no session or the
+  // summary endpoint fails — this drives graceful degradation of the KPI/channel/method UI.
+  currentSummary: CashShiftSummary | null
   // The branch's session history and the currently inspected session's detail.
   history: CashSession[]
   selectedSessionId: string | null
   selectedSession: CashSession | null
   selectedMovements: CashMovement[]
+  // Sucursal cargada, para poder refrescar devoluciones sin pedirla de nuevo.
+  branchId: string | null
+  // Deudas de devolución abiertas: prepagados que no se entregaron. Nunca traban el cierre.
+  pendingRefunds: OrderRefund[]
+  refundsError: string | null
 }
 
 // Write-through discipline (as in the orders/kitchen stores): every mutation calls the API then
@@ -43,8 +54,12 @@ interface CashState {
 // branch has at most one open session, so `currentSession` is the screen's spine.
 export const useCashStore = defineStore('cash', {
   state: (): CashState => ({
+    branchId: null,
+    pendingRefunds: [],
+    refundsError: null,
     currentSession: null,
     currentMovements: [],
+    currentSummary: null,
     history: [],
     selectedSessionId: null,
     selectedSession: null,
@@ -86,19 +101,41 @@ export const useCashStore = defineStore('cash', {
   },
 
   actions: {
-    // Load the active branch's open session (tolerating 404-as-none) and its movements.
+    // Load the active branch's open session (tolerating 404-as-none), its movements, and the
+    // shift summary. The summary is best-effort: a failure leaves it null (graceful degradation).
     async loadBranchCash(branchId: string): Promise<void> {
+      this.branchId = branchId
       try {
         this.currentSession = await api.getOpenSession(branchId)
       } catch (e) {
         if (statusOf(e) === 404) {
           this.currentSession = null
           this.currentMovements = []
+          this.currentSummary = null
           return
         }
         throw e
       }
       this.currentMovements = await api.listMovements(this.currentSession.id)
+      await this.loadCurrentSummary()
+    },
+
+    // Best-effort fetch of the open session's shift summary. Tolerates failure → null.
+    async loadCurrentSummary(): Promise<void> {
+      if (!this.currentSession) {
+        this.currentSummary = null
+        return
+      }
+      try {
+        this.currentSummary = await api.getSessionSummary(this.currentSession.id)
+      } catch {
+        this.currentSummary = null
+      }
+    },
+
+    // Reload the open session + movements + summary. Used by the station's polling loop.
+    async refresh(branchId: string): Promise<void> {
+      await this.loadBranchCash(branchId)
     },
 
     async loadHistory(branchId: string, status?: string): Promise<void> {
@@ -116,6 +153,7 @@ export const useCashStore = defineStore('cash', {
       const session = await api.openSession(input)
       this.currentSession = session
       this.currentMovements = []
+      await this.loadCurrentSummary()
       return session
     },
 
@@ -125,6 +163,7 @@ export const useCashStore = defineStore('cash', {
       if (!this.currentSession) throw new Error('No hay una caja abierta.')
       await api.registerMovement(this.currentSession.id, input)
       this.currentMovements = await api.listMovements(this.currentSession.id)
+      await this.loadCurrentSummary()
     },
 
     // Arqueo: close with a counted amount. The server computes expected/difference; clear the open
@@ -134,9 +173,55 @@ export const useCashStore = defineStore('cash', {
       const closed = await api.closeSession(this.currentSession.id, input)
       this.currentSession = null
       this.currentMovements = []
+      this.currentSummary = null
       await this.loadHistory(closed.branch_id)
       await this.selectSession(closed.id)
       return closed
+    },
+
+    // --- Devoluciones pendientes -------------------------------------------
+    // Se muestran al cerrar como información, nunca como candado: la plata está en el banco,
+    // no en el cajón, así que el arqueo cuadra igual. Lo que SÍ traba el cierre es un
+    // domicilio sin resolver, y eso lo rechaza el backend.
+    async loadRefunds(branchId: string): Promise<void> {
+      this.refundsError = null
+      try {
+        this.pendingRefunds = await ordersApi.listRefunds(branchId, 'pending')
+      } catch {
+        this.refundsError = 'No se pudieron cargar las devoluciones pendientes.'
+      }
+    },
+
+    async confirmRefund(refundId: string, employeeId: string): Promise<boolean> {
+      this.refundsError = null
+      try {
+        await ordersApi.confirmRefund(refundId, employeeId)
+        if (this.branchId) await this.loadRefunds(this.branchId)
+        return true
+      } catch (e) {
+        this.refundsError = detailOf(e) ?? 'No se pudo confirmar la devolución.'
+        return false
+      }
+    },
+
+    async cancelRefund(
+      refundId: string,
+      employeeId: string,
+      reason: string,
+    ): Promise<boolean> {
+      this.refundsError = null
+      if (!reason.trim()) {
+        this.refundsError = 'Decidir no devolver exige un motivo.'
+        return false
+      }
+      try {
+        await ordersApi.cancelRefund(refundId, employeeId, reason.trim())
+        if (this.branchId) await this.loadRefunds(this.branchId)
+        return true
+      } catch (e) {
+        this.refundsError = detailOf(e) ?? 'No se pudo cancelar la devolución.'
+        return false
+      }
     },
   },
 })

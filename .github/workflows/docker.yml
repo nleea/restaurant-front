@@ -50,6 +50,11 @@ jobs:
             ${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ env.DOCKER_USER }}/${{ env.IMAGE_NAME }}:latest
           # VITE_* se compilan dentro del bundle: se pasan como build-args.
+          #
+          # `vars.VITE_API_BASE_URL` debe estar VACÍA salvo que la API viva de verdad en otro
+          # host. Con valor, se hornea en la imagen y GANA sobre el env.js del pod: todos los
+          # tenants llamarían al mismo hostname y el backend resolvería el negocio equivocado.
+          # Vacía, la app usa el `/api` relativo de su propio host, que es lo correcto.
           build-args: |
             VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}
             VITE_API_PORT=${{ vars.VITE_API_PORT }}

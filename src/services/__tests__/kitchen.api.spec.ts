@@ -78,4 +78,40 @@ describe('kitchen api layer', () => {
     expect(post).toHaveBeenCalledWith('/kitchen/tickets/t1/advance')
     expect(ticket.status).toBe('in_progress')
   })
+
+  it('asks for a product station suggestion scoped to a branch', async () => {
+    get.mockResolvedValue({
+      data: {
+        stations: [
+          {
+            station_id: 's1',
+            station_name: 'Parrilla',
+            tasks: ['Carne'],
+            from_variants: ['Grande'],
+            missing_from_saved: [],
+            saved_no_longer_implied: [],
+          },
+        ],
+        unassigned_ingredients: [
+          { ingredient_id: 'i9', name: 'Sal', default_station_in_other_branch: false },
+        ],
+      },
+    })
+
+    const suggestion = await api.getStationSuggestion('p1', 'b1')
+
+    expect(get).toHaveBeenCalledWith('/kitchen/products/p1/station-suggestion', {
+      params: { branch_id: 'b1' },
+    })
+    expect(suggestion.stations[0]?.tasks).toEqual(['Carne'])
+    expect(suggestion.unassigned_ingredients[0]?.name).toBe('Sal')
+  })
+
+  it('never writes when asking for a suggestion', async () => {
+    get.mockResolvedValue({ data: { stations: [], unassigned_ingredients: [] } })
+    await api.getStationSuggestion('p1', 'b1')
+    expect(post).not.toHaveBeenCalled()
+    expect(patch).not.toHaveBeenCalled()
+    expect(del).not.toHaveBeenCalled()
+  })
 })

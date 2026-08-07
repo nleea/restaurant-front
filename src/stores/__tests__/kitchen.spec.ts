@@ -51,6 +51,7 @@ const ticket = (id: string, status: string, itemId = 'i1', role: string | null =
   ready_at: null,
   role,
   tasks: [] as string[],
+  notes: null as string | null,
 })
 
 beforeEach(() => {
@@ -143,7 +144,7 @@ describe('kitchen store', () => {
     const k = useKitchenStore()
     k.stations = [STATION]
     k.itemIndex = {
-      i1: { label: 'Pizza', quantity: 1, orderId: 'o1', channel: 'dine_in', tableNumber: '5', variantId: null },
+      i1: { label: 'Pizza', quantity: 1, orderId: 'o1', channel: 'dine_in', tableNumber: '5', dinerName: null, origin: null, variantId: null },
     }
     apiMock.listTickets.mockResolvedValue([ticket('t1', 'pending', 'i1')])
     await k.pollBoard('b1')
@@ -185,21 +186,23 @@ describe('kitchen store', () => {
   })
 
   it('updateMapping patches role/tasks in place and refetches the product mappings', async () => {
-    apiMock.updateProductStation.mockResolvedValue({ id: 'm1', tasks: ['Carne'] })
+    // Una tarea derivada lleva su insumo: es lo que deja resolver la cantidad por variante.
+    const task = { label: 'Carne', ingredient_id: 'i1' }
+    apiMock.updateProductStation.mockResolvedValue({ id: 'm1', tasks: [task] })
     apiMock.listProductStations.mockResolvedValue([
-      { id: 'm1', product_id: 'p1', kitchen_station_id: 's1', role: 'Parrilla', tasks: ['Carne'] },
+      { id: 'm1', product_id: 'p1', kitchen_station_id: 's1', role: 'Parrilla', tasks: [task] },
     ])
     const k = useKitchenStore()
-    await k.updateMapping('p1', 'm1', { tasks: ['Carne'] })
-    expect(apiMock.updateProductStation).toHaveBeenCalledWith('m1', { tasks: ['Carne'] })
-    expect(k.stationsForProduct('p1')[0]?.tasks).toEqual(['Carne'])
+    await k.updateMapping('p1', 'm1', { tasks: [task] })
+    expect(apiMock.updateProductStation).toHaveBeenCalledWith('m1', { tasks: [task] })
+    expect(k.stationsForProduct('p1')[0]?.tasks).toEqual([task])
   })
 
   it('exposes allTickets flattened across stations and an order_item→order index', () => {
     const k = useKitchenStore()
     k.itemIndex = {
-      i1: { label: 'Pizza', quantity: 1, orderId: 'o1', channel: 'dine_in', tableNumber: '5', variantId: null },
-      i2: { label: 'Pasta', quantity: 1, orderId: 'o2', channel: 'takeaway', tableNumber: null, variantId: null },
+      i1: { label: 'Pizza', quantity: 1, orderId: 'o1', channel: 'dine_in', tableNumber: '5', dinerName: null, origin: null, variantId: null },
+      i2: { label: 'Pasta', quantity: 1, orderId: 'o2', channel: 'takeaway', tableNumber: null, dinerName: null, origin: null, variantId: null },
     }
     k.ticketsByStation = {
       s1: [ticket('t1', 'ready', 'i1')],
@@ -223,7 +226,7 @@ describe('kitchen store', () => {
   it('resolves a ticket label, falling back to a short ref', () => {
     const k = useKitchenStore()
     k.itemIndex = {
-      i1: { label: 'Pizza · Grande', quantity: 2, orderId: 'o1', channel: 'dine_in', tableNumber: '5', variantId: null },
+      i1: { label: 'Pizza · Grande', quantity: 2, orderId: 'o1', channel: 'dine_in', tableNumber: '5', dinerName: null, origin: null, variantId: null },
     }
     expect(k.ticketLabel(ticket('t1', 'pending', 'i1'))).toBe('Pizza · Grande ×2')
     expect(k.ticketLabel(ticket('abcdef1234', 'pending', 'unknown'))).toBe('#abcdef12')
@@ -248,7 +251,7 @@ describe('kitchen store', () => {
       quantity: 3,
       orderId: 'o1',
       channel: 'dine_in',
-      tableNumber: '5',
+      tableNumber: '5', dinerName: null, origin: null,
       variantId: 'v1',
     })
     // i2 resolves to '—' label → ticketLabel will fall back to a short ref
@@ -258,9 +261,9 @@ describe('kitchen store', () => {
   it('groups a station tickets into per-order dockets', () => {
     const k = useKitchenStore()
     k.itemIndex = {
-      i1: { label: 'Pizza · Grande', quantity: 1, orderId: 'o1', channel: 'dine_in', tableNumber: '5', variantId: null },
-      i2: { label: 'Pasta', quantity: 2, orderId: 'o1', channel: 'dine_in', tableNumber: '5', variantId: null },
-      i3: { label: 'Café', quantity: 1, orderId: 'o2', channel: 'takeaway', tableNumber: null, variantId: null },
+      i1: { label: 'Pizza · Grande', quantity: 1, orderId: 'o1', channel: 'dine_in', tableNumber: '5', dinerName: null, origin: null, variantId: null },
+      i2: { label: 'Pasta', quantity: 2, orderId: 'o1', channel: 'dine_in', tableNumber: '5', dinerName: null, origin: null, variantId: null },
+      i3: { label: 'Café', quantity: 1, orderId: 'o2', channel: 'takeaway', tableNumber: null, dinerName: null, origin: null, variantId: null },
     }
     k.ticketsByStation = {
       s1: [ticket('t1', 'pending', 'i1'), ticket('t2', 'pending', 'i2'), ticket('t3', 'ready', 'i3')],

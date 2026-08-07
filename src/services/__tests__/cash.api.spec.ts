@@ -63,6 +63,21 @@ describe('cash api layer', () => {
     expect(session.difference).toBe('-1000.00')
   })
 
+  it('fetches the pre-close pending summary for a session', async () => {
+    get.mockResolvedValue({
+      data: {
+        cash_session_id: 's1',
+        uncollected_count: 2,
+        uncollected_total: '33000.00',
+        undelivered_count: 1,
+      },
+    })
+    const pending = await api.getSessionPending('s1')
+    expect(get).toHaveBeenCalledWith('/cash/sessions/s1/pending')
+    expect(pending.uncollected_count).toBe(2)
+    expect(pending.undelivered_count).toBe(1)
+  })
+
   it('registers a movement and lists movements for a session', async () => {
     post.mockResolvedValue({ data: { id: 'm1', type: 'in' } })
     get.mockResolvedValue({ data: [{ id: 'm1' }] })

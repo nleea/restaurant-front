@@ -22,12 +22,50 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/payment/delivery/:token',
+      name: 'deliveryPayment',
+      component: () => import('@/views/DeliveryPaymentView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/403',
       name: 'forbidden',
       component: () => import('@/views/ForbiddenView.vue'),
       meta: { public: true },
     },
     { path: '/', redirect: { name: 'rbac' } },
+    {
+      // Pedir desde la mesa escaneando su QR. Sede y mesa son SEGMENTOS de ruta porque eso es
+      // exactamente lo que la calcomanía lleva impreso, y porque un pedido no puede contradecir
+      // la carta que el comensal estuvo mirando. Declarada ANTES de `/store/:branchCode?` para
+      // que "tables" no se coma nunca el segmento de la sede.
+      // Pública sin condiciones: quien la abre está sentado en una mesa, no logueado.
+      path: '/store/:branchCode/table/:tableCode',
+      name: 'tableOrder',
+      component: () => import('@/views/TableOrderView.vue'),
+      meta: { public: true },
+    },
+    {
+      // Public customer storefront: browse the carta + place an order. No auth (reached via QR/link);
+      // consumes the tenant's appearance config and wears its theme.
+      // `:branchCode?` addresses one branch (branches.code) — the link a customer is handed over
+      // WhatsApp. Omitted, it falls back to the tenant's primary branch, so single-branch tenants
+      // keep the short /store link unchanged.
+      path: '/store/:branchCode?',
+      name: 'store',
+      component: () => import('@/views/StorefrontView.vue'),
+      meta: { public: true },
+    },
+    {
+      // «Mi pedido»: el cliente corrige lo que pidió. El token de la ruta ES la credencial — no
+      // hay login detrás y no depende de WhatsApp, así que sirve igual a quien pidió por la web.
+      // Público a propósito: exigir sesión aquí sería pedirle cuenta a quien sólo quiere quitar
+      // la lechuga.
+      path: '/my-order/:token',
+      name: 'myOrder',
+      component: () => import('@/views/MyOrderView.vue'),
+      meta: { public: true },
+    },
     // The /kds mock prototype was wired to real data and now lives at /kitchen (pass area).
     { path: '/kds', redirect: { name: 'kitchen' } },
     // The Domicilios map prototype was wired to real data and now lives at /delivery.
@@ -39,6 +77,25 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'orders.read' },
     },
     {
+      // La hoja imprimible con el QR de cada mesa. Vive junto al Salón porque es quien conoce
+      // las mesas, y detrás del mismo permiso de lectura: el código de una mesa no es un
+      // secreto —va impreso a la vista de cualquiera que entre—, así que lo que se protege es
+      // el panel, no el dato.
+      path: '/floor/qr',
+      name: 'tableQr',
+      component: () => import('@/views/TableQrSheetView.vue'),
+      meta: { requiresAuth: true, permission: 'orders.read' },
+    },
+    {
+      // The order detail (the Comanda, wired to a real order) as a routed child of the
+      // Salón: tap-to-stamp menu field + live dupe + cobro sheet. Deep-linkable; a
+      // closed/cancelled/missing order redirects back to /floor.
+      path: '/floor/order/:id',
+      name: 'order',
+      component: () => import('@/views/OrderDetailView.vue'),
+      meta: { requiresAuth: true, permission: 'orders.read' },
+    },
+    {
       // Guarded placeholder; the next change turns this into the RBAC/users screen.
       path: '/rbac',
       name: 'rbac',
@@ -46,10 +103,22 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'rbac.manage' },
     },
     {
+      // The Carta redesign (full-screen recipe costing bench, live food-cost meter) was wired
+      // to the real menu store and is now THE menu screen. The old MenuView is retired.
       path: '/menu',
       name: 'menu',
-      component: () => import('@/views/MenuView.vue'),
+      component: () => import('@/views/CartaView.vue'),
       meta: { requiresAuth: true, permission: 'menu.read' },
+    },
+    // The redesign used to live at /carta; keep the old path working as a redirect.
+    { path: '/carta', redirect: { name: 'menu' } },
+    {
+      // Admin editor for the public storefront's look (theme, brand, block grid). Configures the
+      // customer-facing carta; the storefront itself is a separate surface. Gated by menu.manage.
+      path: '/menu/appearance',
+      name: 'menu-appearance',
+      component: () => import('@/views/MenuAppearanceView.vue'),
+      meta: { requiresAuth: true, permission: 'menu.manage' },
     },
     {
       path: '/catalog',
@@ -81,6 +150,9 @@ const router = createRouter({
     // The standalone "Comandas" screen was replaced by the Salón floor; keep the old
     // path working as a redirect.
     { path: '/orders', redirect: { name: 'floor' } },
+    // The Comanda redesign became the real order screen at /floor/order/:id; the old
+    // in-memory prototype route redirects to the Salón.
+    { path: '/comanda', redirect: { name: 'floor' } },
     {
       path: '/kitchen',
       name: 'kitchen',
@@ -88,11 +160,23 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'kitchen.read' },
     },
     {
+      // The Caja redesign was wired to real data and is now THE cash screen.
       path: '/cash',
       name: 'cash',
-      component: () => import('@/views/CashView.vue'),
+      component: () => import('@/views/CashStationView.vue'),
       meta: { requiresAuth: true, permission: 'cash.read' },
     },
+    {
+      // Cobrar una mesa: agrupar sus comandas y liquidarlas en un gesto. Vive bajo Caja porque
+      // es quien cobra, y detrás de `orders.pay` — la misma autoridad que cobrar una comanda
+      // suelta, que es exactamente lo que hace, sobre varias a la vez.
+      path: '/cash/tables',
+      name: 'tableSettlement',
+      component: () => import('@/views/TableSettlementView.vue'),
+      meta: { requiresAuth: true, permission: 'orders.pay' },
+    },
+    // The redesign used to live at /cash/station; keep the old path working.
+    { path: '/cash/station', redirect: { name: 'cash' } },
     {
       // The inventory board (stats/filters · table/cards · detail drawer).
       path: '/inventory',
@@ -134,19 +218,87 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'delivery.read' },
     },
     {
+      // The shared WhatsApp inbox, scoped to the active branch.
+      path: '/whatsapp',
+      name: 'whatsapp-inbox',
+      component: () => import('@/views/WhatsAppInboxView.vue'),
+      meta: { requiresAuth: true, permission: 'messaging.read' },
+    },
+    {
+      // One number per branch: pairing and connection status.
+      path: '/whatsapp/sessions',
+      name: 'whatsapp-sessions',
+      component: () => import('@/views/WhatsAppSessionsView.vue'),
+      meta: { requiresAuth: true, permission: 'messaging.manage' },
+    },
+    {
+      // What the number answers on its own: greeting, order notices, link lifetime. Editing
+      // it changes what every customer of every branch is told, so it is `messaging.manage`
+      // — attending a conversation must not let anyone rewrite the greeting.
+      path: '/whatsapp/autoreply',
+      name: 'whatsapp-autoreply',
+      component: () => import('@/views/WhatsAppAutoreplyView.vue'),
+      meta: { requiresAuth: true, permission: 'messaging.manage' },
+    },
+    {
       // The dispatch board (three-pane: stats/filters · list · detail).
       path: '/dispatch',
       name: 'dispatch',
       component: () => import('@/views/DispatchView.vue'),
       meta: { requiresAuth: true, permission: 'delivery.read' },
     },
+    {
+      // The driver's ("domiciliario") own mobile view: my run, my map, my day. Full-screen
+      // mobile experience (no AppShell); reads only its own work, never assigns. Gated by
+      // `delivery.drive` (the courier permission), independent of the dispatcher's read/assign.
+      path: '/driver',
+      name: 'driver',
+      component: () => import('@/views/DriverView.vue'),
+      meta: { requiresAuth: true, permission: 'delivery.drive' },
+    },
     // The board replaced the old two-column screen; the design-prototype URL redirects home.
     { path: '/dispatch/design', redirect: { name: 'dispatch' } },
+    {
+      // Lo que está encendido en la sucursal activa. Ver y TOMAR es el turno, así que las
+      // dos cosas van con `alerts.read`; configurar vive aparte.
+      path: '/alerts',
+      name: 'alerts',
+      component: () => import('@/views/AlertsView.vue'),
+      meta: { requiresAuth: true, permission: 'alerts.read' },
+    },
+    {
+      // Umbrales, colchones y a quién se le escribe a las once de la noche: el dueño.
+      path: '/alerts/rules',
+      name: 'alerts-rules',
+      component: () => import('@/views/AlertRulesView.vue'),
+      meta: { requiresAuth: true, permission: 'alerts.manage' },
+    },
+    {
+      // Preguntar es del turno; ver lo que cuesta y comprar más es del dueño.
+      path: '/assistant',
+      name: 'assistant',
+      component: () => import('@/views/AssistantView.vue'),
+      meta: { requiresAuth: true, permission: 'assistant.use' },
+    },
+    {
+      path: '/assistant/usage',
+      name: 'assistant-usage',
+      component: () => import('@/views/AssistantUsageView.vue'),
+      meta: { requiresAuth: true, permission: 'assistant.manage' },
+    },
     {
       path: '/audit',
       name: 'audit',
       component: () => import('@/views/AuditView.vue'),
       meta: { requiresAuth: true, permission: 'audit.read' },
+    },
+    {
+      // Admin editor for the tenant's identity + branches (address/phone + weekly hours).
+      // Reads are open, but every save requires menu.manage (backend enforces independently).
+      path: '/business',
+      name: 'business',
+      component: () => import('@/views/BusinessProfileView.vue'),
+      meta: { requiresAuth: true, permission: 'menu.manage' },
     },
   ],
 })

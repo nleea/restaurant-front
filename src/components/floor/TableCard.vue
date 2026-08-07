@@ -85,9 +85,23 @@ const readyBorder = computed(() =>
           <span class="size-1.5 rounded-full" :class="s.dot" />
           {{ s.label }}
         </span>
-        <span v-if="vm.isOccupied" class="font-mono text-xs tabular-nums text-steel-600">
+        <span v-if="vm.isOccupied" class="font-mono text-xs tabular-nums text-steel-600" data-testid="table-total">
           {{ formatCOP(vm.total) }}
         </span>
+      </span>
+
+      <!-- Cuántos comen y quiénes. Sin meseros, cruzar el salón sólo plantea dos preguntas:
+           cuánta gente hay en esa mesa y cuánto lleva encima. -->
+      <span
+        v-if="vm.openOrders.length > 1 || vm.dinerNames.length"
+        class="text-[11px] text-steel-500"
+        data-testid="table-diners"
+      >
+        <span v-if="vm.openOrders.length > 1" class="font-medium">
+          {{ vm.openOrders.length }} comandas
+        </span>
+        <span v-if="vm.openOrders.length > 1 && vm.dinerNames.length"> · </span>
+        <span v-if="vm.dinerNames.length" class="truncate">{{ vm.dinerNames.join(' · ') }}</span>
       </span>
 
       <!-- Kitchen readiness: cooking progress or the "ready to pick up" cooling timer -->

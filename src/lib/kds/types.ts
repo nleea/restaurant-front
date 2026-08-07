@@ -53,6 +53,8 @@ export interface KdsItem {
   qty: number
   name: string
   modifiers: string[]
+  /** Free-text kitchen note carried from the order item ("sin lechuga"); null when none. */
+  note?: string | null
   components: KdsComponent[]
   /** Product variant behind the dish — lets the recipe drawer fetch the real recipe card. */
   variantId?: string | null
@@ -66,6 +68,12 @@ export interface KdsOrder {
   guests: number // 0 when unknown (real tickets don't carry it)
   type: OrderType
   waiter: string // '' when unknown (real tickets don't carry it)
+  /** Nombre del comensal que pidió por el QR de su mesa. '' cuando la comanda no lo sabe.
+   *  Sin mesero, es lo único que dice de quién es el plato que sale. */
+  diner: string
+  /** El pedido lo levantó el propio cliente: NADIE del negocio lo miró antes del fogón.
+   *  Es un hecho distinto de la mesa y del canal, y no se puede deducir de ninguno. */
+  selfOrdered: boolean
   /** ms timestamp the order was fired. */
   startedAt: number
   /** ms timestamp it was bumped/closed, else null. */
