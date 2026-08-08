@@ -158,14 +158,16 @@ describe('el token del enlace de WhatsApp', () => {
     expect(cart.customerPhone).toBe('+573001112233')
   })
 
-  it('una cuenta con sesión gana sobre todo, y el token ni se consulta', async () => {
-    // Precedencia existente, intacta: los datos de la cuenta mandan sobre cualquier precarga.
+  it('una sesión de staff en el navegador no apaga ninguna precarga', async () => {
+    // Antes las apagaba las dos. Pero un token en localStorage es de STAFF —el dueño probando
+    // su propia tienda, o la tablet del local— y no significa que ESTE cliente tenga cuenta:
+    // aquí no hay login de clientes. La tienda es pública y se comporta igual con sesión o sin.
     useAuthStore().accessToken = 'jwt'
 
     await mountStore({ t: 'tok-123' })
 
-    expect(storefrontMock.resolveStoreSession).not.toHaveBeenCalled()
-    expect(guestMock.getGuestProfile).not.toHaveBeenCalled()
+    expect(storefrontMock.resolveStoreSession).toHaveBeenCalledWith('tok-123')
+    expect(guestMock.getGuestProfile).toHaveBeenCalled()
   })
 
   it('sin token el pedido se crea igual, sólo que sin enlazar', async () => {

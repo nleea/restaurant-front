@@ -14,7 +14,6 @@ import type { Addon, StorefrontCategory, StorefrontProduct } from '@/lib/storefr
 import type { Step } from '@/lib/storefront'
 import * as storefront from '@/services/storefront.api'
 import { ProofUploadFailed, uploadPaymentProof } from '@/services/paymentProof.api'
-import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useGuestProfileStore } from '@/stores/guestProfile'
 import BannerBlock from '@/components/storefront/blocks/BannerBlock.vue'
@@ -187,8 +186,6 @@ const storeToken = computed<string | undefined>(() => {
 async function prefillFromToken(): Promise<void> {
   const token = storeToken.value
   if (!token) return
-  // An account's own data outranks anything a link carries — same rule the guest profile follows.
-  if (useAuthStore().isAuthenticated) return
   const session = await storefront.resolveStoreSession(token)
   if (!session) return
   if (session.name) cart.setContact({ name: session.name })
