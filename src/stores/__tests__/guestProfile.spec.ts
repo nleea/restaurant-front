@@ -51,10 +51,17 @@ describe('guestProfile store', () => {
     expect(useCartStore().customerName).toBe('')
   })
 
-  it('does not read the guest profile when a real user is authenticated', async () => {
+  // A staff token in localStorage used to switch the whole feature off. It never meant "this
+  // customer has an account" — customers have no login — only "someone signed into the panel on
+  // this browser", which is the owner's own machine and the shop's tablet.
+  it('still reads the guest profile with a staff session in the browser', async () => {
     useAuthStore().accessToken = 'a-real-token'
+    apiMock.getGuestProfile.mockResolvedValue({ name: 'Ana', phone: '300', address: null })
+
     await useGuestProfileStore().load()
-    expect(apiMock.getGuestProfile).not.toHaveBeenCalled()
+
+    expect(apiMock.getGuestProfile).toHaveBeenCalled()
+    expect(useCartStore().customerName).toBe('Ana')
   })
 
   it('persists the entered contact and composed address', async () => {
@@ -71,9 +78,17 @@ describe('guestProfile store', () => {
     })
   })
 
-  it('does not persist when a real user is authenticated', async () => {
+  it('still persists with a staff session in the browser', async () => {
     useAuthStore().accessToken = 'a-real-token'
+    apiMock.saveGuestProfile.mockResolvedValue({ name: null, phone: null, address: null })
+    useCartStore().setContact({ name: 'Ana', phone: '3001234567' })
+
     await useGuestProfileStore().persist('Calle 1')
-    expect(apiMock.saveGuestProfile).not.toHaveBeenCalled()
+
+    expect(apiMock.saveGuestProfile).toHaveBeenCalledWith({
+      name: 'Ana',
+      phone: '3001234567',
+      address: 'Calle 1',
+    })
   })
 })
