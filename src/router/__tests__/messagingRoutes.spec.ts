@@ -35,6 +35,20 @@ describe('WhatsApp routes', () => {
     expect(route.meta.permission).toBe('messaging.manage')
   })
 
+  it('gates the statuses screen on messaging.manage', () => {
+    // Programar un estado decide qué se le enseña a TODOS los contactos de la sede, y eso es una
+    // decisión del negocio: atender un chat no puede darla.
+    const route = router.resolve('/whatsapp/statuses')
+    expect(route.name).toBe('whatsapp-statuses')
+    expect(route.meta.requiresAuth).toBe(true)
+    expect(route.meta.permission).toBe('messaging.manage')
+  })
+
+  it('does not let the inbox permission reach the statuses screen', () => {
+    expect(router.resolve('/whatsapp/statuses').meta.permission).not.toBe('messaging.read')
+    expect(router.resolve('/whatsapp/statuses').meta.permission).not.toBe('messaging.attend')
+  })
+
   it('does not let the inbox permission reach the autoreply settings', () => {
     expect(router.resolve('/whatsapp/autoreply').meta.permission).not.toBe(
       router.resolve('/whatsapp').meta.permission,

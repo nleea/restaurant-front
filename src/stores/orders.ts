@@ -13,14 +13,7 @@ import type {
   PaymentClaim,
   RegisterPaymentInput,
 } from '@/services/orders.api'
-import { useMenuStore } from '@/stores/menu'
 import { statusOf } from '@/lib/apiError'
-
-interface VariantInfo {
-  productName: string
-  variantName: string
-  unitPrice: number
-}
 
 interface OrdersState {
   currentEmployee: Employee | null
@@ -32,16 +25,17 @@ interface OrdersState {
   // Los comprobantes que mandó el cliente, por pedido. NO son pagos: no suman al saldo y sólo
   // existen para que una persona los mire antes de verificar.
   paymentClaims: Record<string, PaymentClaim[]>
-  // variant_id → product/variant labels + computed orderable unit price (branch price + extra).
-  variantIndex: Record<string, VariantInfo>
 }
 
 // Live-refetch handle (module-level plumbing, like the poll/SSE state in stores/kitchen.ts).
 let live: LiveRefetch | undefined
 
 // Write-through discipline: every mutation calls the API then refetches the affected order (and
-// its items) so the server-recomputed totals are shown verbatim. The client only computes the
-// per-item `unit_price` it submits (from the variant index), never the order totals.
+// its items) so the server-recomputed totals are shown verbatim.
+//
+// El cliente **no calcula dinero**, y esto es un cambio respecto a como estaba: antes componía el
+// `unit_price` de cada línea a partir de un índice del menú, y para construir ese índice pedía un
+// endpoint por producto. Ahora el precio y la etiqueta vienen resueltos del servidor.
 export const useOrdersStore = defineStore('orders', {
   state: (): OrdersState => ({
     currentEmployee: null,
@@ -51,7 +45,6 @@ export const useOrdersStore = defineStore('orders', {
     itemsByOrder: {},
     paymentsByOrder: {},
     paymentClaims: {},
-    variantIndex: {},
   }),
 
   getters: {
@@ -99,14 +92,19 @@ export const useOrdersStore = defineStore('orders', {
         )
         return paid < Number(order.total ?? 0)
       },
+    /**
+     * Cómo se llama una línea, **leído de la propia línea**.
+     *
+     * Ya no hay índice del menú que consultar: el servidor resuelve el nombre al leer. Eso es lo
+     * que permite pintar una comanda sin haber pedido ni un endpoint de carta.
+     */
     itemLabel:
-      (state) =>
+      () =>
       (item: OrderItem): string => {
-        const info = state.variantIndex[item.product_variant_id]
-        if (!info) return '—'
-        return info.variantName && info.variantName !== 'Estándar'
-          ? `${info.productName} · ${info.variantName}`
-          : info.productName
+        if (!item.product_name) return '—'
+        return item.variant_name && item.variant_name !== 'Estándar'
+          ? `${item.product_name} · ${item.variant_name}`
+          : item.product_name
       },
   },
 
@@ -131,33 +129,30 @@ export const useOrdersStore = defineStore('orders', {
       this.orders = await api.listOrders({ branchId, status })
     },
 
-    // Build the variant index from the menu: products + active-branch prices + per-product
-    // variants → { labels, unitPrice = branchPrice + variant.extra_price }.
-    async buildVariantIndex(branchId: string): Promise<void> {
-      const menu = useMenuStore()
-      await menu.fetchProducts()
-      await menu.loadPrices(branchId)
-      await Promise.all(menu.products.map((p) => menu.loadVariants(p.id)))
-      const index: Record<string, VariantInfo> = {}
-      for (const product of menu.products) {
-        const base = Number(menu.priceByProductId[product.id] ?? 0)
-        for (const variant of menu.variantsByProductId[product.id] ?? []) {
-          index[variant.id] = {
-            productName: product.name,
-            variantName: variant.name ?? 'Estándar',
-            unitPrice: base + Number(variant.extra_price),
-          }
-        }
-      }
-      this.variantIndex = index
+    /**
+     * Las comandas **con sus líneas**, en UNA petición.
+     *
+     * Sustituye al patrón de "lista las comandas y luego pide los ítems de cada una", que con doce
+     * mesas abiertas eran trece peticiones. `itemsByOrder` se rellena de la misma respuesta, así que
+     * todo lo que ya leía de ahí sigue funcionando sin cambios.
+     */
+    async loadOrdersWithItems(
+      branchId: string,
+      status: string | undefined = 'open',
+    ): Promise<void> {
+      const orders = await api.listOrders({ branchId, status, includeItems: true })
+      this.orders = orders
+      const byOrder: Record<string, OrderItem[]> = {}
+      for (const order of orders) byOrder[order.id] = order.items ?? []
+      this.itemsByOrder = { ...this.itemsByOrder, ...byOrder }
     },
 
     async ensureLoaded(branchId: string): Promise<void> {
       await Promise.all([
         this.resolveEmployee(),
         this.loadTables(branchId),
-        this.loadOrders(branchId),
-        this.buildVariantIndex(branchId),
+        // Con las líneas: cuesta la misma petición y evita una por comanda más adelante.
+        this.loadOrdersWithItems(branchId),
       ])
     },
 
@@ -214,13 +209,9 @@ export const useOrdersStore = defineStore('orders', {
     // A tile tap stamps the line, nothing else — the kitchen note is written afterwards on
     // the dupe (`setItemNotes`), where there is room for it.
     async addItem(orderId: string, variantId: string, quantity: number): Promise<void> {
-      const info = this.variantIndex[variantId]
-      const unitPrice = (info?.unitPrice ?? 0).toFixed(2)
-      await api.addItem(orderId, {
-        product_variant_id: variantId,
-        quantity,
-        unit_price: unitPrice,
-      })
+      // Sin precio: lo pone el servidor. Antes se leía de un índice del menú que costaba una
+      // petición por producto — y con el índice vacío mandaba "0.00".
+      await api.addItem(orderId, { product_variant_id: variantId, quantity })
       await this.refreshOrder(orderId)
     },
 

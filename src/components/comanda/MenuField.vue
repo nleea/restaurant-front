@@ -6,12 +6,10 @@
 import { computed, ref } from 'vue'
 import ProductTile from './ProductTile.vue'
 import { useMenuStore } from '@/stores/menu'
-import { useOrdersStore } from '@/stores/orders'
 
 const emit = defineEmits<{ add: [variantId: string] }>()
 
 const menu = useMenuStore()
-const orders = useOrdersStore()
 
 interface TileVariant {
   id: string
@@ -42,28 +40,24 @@ const catTag = computed<Record<string, string>>(() => {
 // Orderable = has an active-branch price AND at least one active variant. A variant's
 // unit price comes from the store's variant index (branch price + variant extra).
 const tiles = computed<Tile[]>(() =>
-  menu.products
-    .filter(
-      (p) =>
-        menu.priceByProductId[p.id] != null &&
-        (menu.variantsByProductId[p.id] ?? []).some((v) => v.is_active),
-    )
-    .map((p) => {
-      const active = (menu.variantsByProductId[p.id] ?? []).filter((v) => v.is_active)
-      const single = active.length === 1
-      const variants: TileVariant[] = active.map((v) => ({
-        id: v.id,
-        label: single || !v.name || v.name === 'Estándar' ? '' : v.name,
-        price: orders.variantIndex[v.id]?.unitPrice ?? 0,
-      }))
-      return {
-        id: p.id,
-        name: p.name,
-        categoryId: p.category_id,
-        tag: catTag.value[p.category_id] ?? '··',
-        variants,
-      }
-    }),
+  // `menu.orderable` ya viene filtrado a lo vendible y con el precio de cada variante compuesto por
+  // el servidor. Antes esto se armaba de tres fuentes —productos, precios por producto, variantes
+  // por producto— y el precio salía de un índice que el navegador calculaba.
+  menu.orderable.map((p) => {
+    const single = p.variants.length === 1
+    const variants: TileVariant[] = p.variants.map((v) => ({
+      id: v.id,
+      label: single || !v.name || v.name === 'Estándar' ? '' : v.name,
+      price: Number(v.price),
+    }))
+    return {
+      id: p.id,
+      name: p.name,
+      categoryId: p.category_id,
+      tag: catTag.value[p.category_id] ?? '··',
+      variants,
+    }
+  }),
 )
 
 // Only rail categories that actually have an orderable tile.

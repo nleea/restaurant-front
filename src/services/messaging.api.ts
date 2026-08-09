@@ -123,6 +123,13 @@ export interface Thread {
   contact_id: string
   contact_name: string | null
   contact_phone: string
+  /**
+   * Si este contacto pidió no recibir estados.
+   *
+   * Viaja en el hilo y no en la lista de la bandeja porque el interruptor vive en el hilo: es
+   * donde llega la petición y donde está quien la lee.
+   */
+  contact_status_opt_out: boolean
   status: ConversationStatus
   employee_id: string | null
   holder_name: string | null
@@ -321,4 +328,197 @@ export async function saveAutoreplySettings(
 export async function getQuickReplies(): Promise<QuickReply[]> {
   const { data } = await http.get<{ quick_replies: QuickReply[] }>('/messaging/quick-replies')
   return data.quick_replies
+}
+
+// --- Estados programados ------------------------------------------------------
+// Publicar un estado NO es mandar un mensaje, y el contrato lo refleja de dos formas que
+// conviene no "arreglar":
+//
+// 1. **Un estado de texto lleva color de fondo y fuente**, porque WhatsApp los exige (400 sin
+//    ellos). No son decoración: son la razón de que un estado se COMPONGA en vez de escribirse,
+//    y de que la vista previa tenga que pintarlos de verdad.
+// 2. **No existe ningún campo de vistas ni de entregados**, y no puede existir. El proveedor no
+//    devuelve espectadores y devuelve 201 aunque se le caigan tandas de destinatarios. Lo más
+//    fuerte que se puede afirmar es "publicado" y "enviado a N". Si algún día alguien añade
+//    `views` aquí, será mentira.
+
+export type StatusType = 'text' | 'image'
+
+/** Cómo acabó una franja vencida. Cuatro finales, y los dos "omitido" son distintos. */
+export type PublicationState =
+  | 'published'
+  | 'failed'
+  /** Venció fuera de la ventana de gracia: un estado caduca a las 24h, sacarlo tarde es peor. */
+  | 'skipped_late'
+  /** No quedó nadie tras las cuatro reducciones. Nada se rompió; no había a quién. */
+  | 'skipped_empty'
+
+/**
+ * Una ocasión en la que el estado se publica: un día de la semana O una fecha, más la hora.
+ *
+ * `minute` son minutos desde medianoche en hora LOCAL de la sede. Exactamente uno de
+ * `weekday` / `on_date` va puesto — y por eso **no hay ningún campo de recurrencia**: marcar
+ * los siete días ES "todos los días", y un `kind` aparte sería un segundo sitio decidiendo el
+ * mismo hecho, capaz de contradecir a sus propias franjas.
+ */
+export interface StatusSlot {
+  minute: number
+  /** 0=lunes … 6=domingo. Nulo cuando la franja es de una fecha concreta. */
+  weekday: number | null
+  /** `YYYY-MM-DD`. Nulo cuando la franja es semanal. */
+  on_date: string | null
+}
+
+export interface WhatsAppStatus {
+  id: string
+  branch_id: string
+  type: StatusType
+  /** El texto de la tarjeta, o la URL de la imagen. */
+  content: string
+  slots: StatusSlot[]
+  /** Obligatorios para `text` (WhatsApp los exige); nulos para `image`. */
+  bg_color: string | null
+  font: number | null
+  caption: string | null
+  media_url: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface StatusDraft {
+  type: StatusType
+  content: string
+  slots: StatusSlot[]
+  bg_color: string | null
+  font: number | null
+  caption: string | null
+  media_url: string | null
+  active: boolean
+}
+
+/**
+ * La audiencia y el porqué de cada baja, para enseñarla ANTES de programar.
+ *
+ * Las cuatro exclusiones van sueltas y no sumadas a propósito: un total no responde la única
+ * pregunta que importa —*por qué* bajó de 340 a 200— y `excluded_by_cap > 0` es lo único que
+ * distingue "esto llega a todos los que puede" de "esto se truncó".
+ */
+export interface AudiencePreview {
+  /** A cuántos se DIRIGIRÍA. No a cuántos llegaría: eso no se puede saber. */
+  addressed: number
+  total_candidates: number
+  /** Contactos que sólo tienen un JID de privacidad (`@lid`). No reciben estados. */
+  excluded_no_number: number
+  excluded_opted_out: number
+  excluded_inactive: number
+  excluded_by_cap: number
+  /** Cuántas llamadas al proveedor costaría. Es el número que mide el riesgo. */
+  provider_calls: number
+}
+
+export interface StatusPublication {
+  id: string
+  fired_for_date: string
+  minute: number
+  state: PublicationState
+  /** A cuántos se dirigió. **Nunca** "a cuántos llegó". */
+  addressed_count: number
+  excluded_no_number: number
+  excluded_opted_out: number
+  excluded_inactive: number
+  excluded_by_cap: number
+  late_by_minutes: number
+  created_at: string
+}
+
+export async function listStatuses(branchId: string): Promise<WhatsAppStatus[]> {
+  return (
+    await http.get<WhatsAppStatus[]>('/messaging/statuses', {
+      params: { branch_id: branchId },
+    })
+  ).data
+}
+
+export async function previewStatusAudience(
+  branchId: string,
+): Promise<AudiencePreview> {
+  return (
+    await http.get<AudiencePreview>('/messaging/statuses/audience', {
+      params: { branch_id: branchId },
+    })
+  ).data
+}
+
+export async function createStatus(
+  branchId: string,
+  draft: StatusDraft,
+): Promise<WhatsAppStatus> {
+  return (
+    await http.post<WhatsAppStatus>('/messaging/statuses', draft, {
+      params: { branch_id: branchId },
+    })
+  ).data
+}
+
+export async function updateStatus(
+  branchId: string,
+  statusId: string,
+  draft: StatusDraft,
+): Promise<WhatsAppStatus> {
+  return (
+    await http.put<WhatsAppStatus>(`/messaging/statuses/${statusId}`, draft, {
+      params: { branch_id: branchId },
+    })
+  ).data
+}
+
+export async function deleteStatus(
+  branchId: string,
+  statusId: string,
+): Promise<void> {
+  await http.delete(`/messaging/statuses/${statusId}`, {
+    params: { branch_id: branchId },
+  })
+}
+
+export async function listStatusPublications(
+  branchId: string,
+  statusId: string,
+): Promise<StatusPublication[]> {
+  return (
+    await http.get<StatusPublication[]>(
+      `/messaging/statuses/${statusId}/publications`,
+      { params: { branch_id: branchId } },
+    )
+  ).data
+}
+
+export async function uploadStatusImage(file: File): Promise<string> {
+  const form = new FormData()
+  form.append('file', file)
+  return (
+    await http.post<{ url: string }>('/messaging/statuses/image', form)
+  ).data.url
+}
+
+/**
+ * "Este contacto no quiere estados", desde el hilo donde lo pidió.
+ *
+ * Se entra por la CONVERSACIÓN y necesita `messaging.attend`, no `manage`: la petición llega en
+ * el chat y quien la lee es quien atiende. La marca, en cambio, es del contacto y aplica a todas
+ * las sedes — "no me manden más" se le pide al negocio, no a una sucursal.
+ */
+export async function setStatusOptOut(
+  branchId: string,
+  conversationId: string,
+  optedOut: boolean,
+): Promise<Thread> {
+  return (
+    await http.put<Thread>(
+      `/messaging/conversations/${conversationId}/status-opt-out`,
+      { opted_out: optedOut },
+      { params: { branch_id: branchId } },
+    )
+  ).data
 }

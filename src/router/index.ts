@@ -241,6 +241,15 @@ const router = createRouter({
       meta: { requiresAuth: true, permission: 'messaging.manage' },
     },
     {
+      // Lo que el número publica SOLO en Novedades, a su hora. `messaging.manage` y no `attend`:
+      // programar un estado decide qué se le enseña a todos los contactos de la sede, que es una
+      // decisión del negocio — atender un chat no puede darla.
+      path: '/whatsapp/statuses',
+      name: 'whatsapp-statuses',
+      component: () => import('@/views/WhatsAppStatusesView.vue'),
+      meta: { requiresAuth: true, permission: 'messaging.manage' },
+    },
+    {
       // The dispatch board (three-pane: stats/filters · list · detail).
       path: '/dispatch',
       name: 'dispatch',

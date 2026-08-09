@@ -61,11 +61,16 @@ async function load() {
 
 // Kitchen tickets feed the ready rollup. Best-effort: a kitchen hiccup must not break the Salón —
 // the cards degrade to plain occupied/total when this data is missing.
+//
+// Estuvo comentado como parche de rendimiento, y el parche tenía un precio que no se veía: el Salón
+// perdió el rollup, así que una tarjeta decía "ocupada" en vez de "esta mesa está esperando comida".
+// Vuelve porque ya no cuesta 55 peticiones: `ensureLoaded` trajo las comandas con sus líneas, y
+// `buildItemIndex` sólo indexa lo que hay.
 async function loadKitchen(branchId: string) {
   try {
     await kitchen.loadStations(branchId)
     await kitchen.loadAllStationTickets()
-    await kitchen.buildItemIndex(branchId)
+    kitchen.buildItemIndex()
   } catch {
     /* degrade gracefully */
   }

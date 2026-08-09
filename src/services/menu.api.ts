@@ -177,3 +177,39 @@ export async function updateVariant(
 export async function deleteVariant(variantId: string): Promise<void> {
   await http.delete(`/menu/variants/${variantId}`)
 }
+
+/**
+ * Una variante pedible, con **el precio que se va a cobrar** (sede + recargo, ya compuesto).
+ *
+ * Viene resuelto del servidor a propósito: si el cliente lo recompusiera habría dos fórmulas para el
+ * mismo número, que es el bug que `server-prices-order-lines` cerró. El mosaico enseña este número y
+ * `addItem` cobra este número.
+ */
+export interface OrderableVariant {
+  id: string
+  name: string | null
+  price: string
+}
+
+/** Un producto que se puede pedir HOY en esa sede. Sólo aparece lo vendible. */
+export interface OrderableProduct {
+  id: string
+  category_id: string
+  name: string
+  variants: OrderableVariant[]
+}
+
+/**
+ * Qué se puede pedir hoy en una sede, en UNA petición.
+ *
+ * Sustituye al patrón que la comanda usaba: `listProducts` + un `listProductPrices` por producto +
+ * un `listVariants` por producto — con 40 productos, unas 81 peticiones antes de que el mesero
+ * pudiera tocar nada.
+ */
+export async function listOrderable(branchId: string): Promise<OrderableProduct[]> {
+  return (
+    await http.get<OrderableProduct[]>('/menu/orderable', {
+      params: { branch_id: branchId },
+    })
+  ).data
+}

@@ -26,6 +26,7 @@ function thread(over: Partial<Thread> = {}): Thread {
     contact_id: 'k1',
     contact_name: 'Ana Restrepo',
     contact_phone: '+573001112233',
+    contact_status_opt_out: false,
     status: 'new',
     employee_id: null,
     holder_name: null,

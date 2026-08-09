@@ -5,6 +5,7 @@ import type {
   Addon,
   Category,
   CategoryInput,
+  OrderableProduct,
   Product,
   ProductInput,
   ProductVariant,
@@ -39,6 +40,10 @@ interface MenuState {
   recipeItemsByVariantId: Record<string, RecipeItem[]>
   // Active variants that sell without a recipe (a stock-guard leak), for the menu-wide banner.
   variantsMissingRecipe: VariantMissingRecipe[]
+  // Lo que se puede PEDIR en la sede activa, con el precio de cada variante ya compuesto por el
+  // servidor. Es una lista distinta de `products` a propósito: aquélla es el catálogo para
+  // administrar, ésta es lo vendible para cobrar, y mezclarlas obligaría a una de las dos a mentir.
+  orderable: OrderableProduct[]
 }
 
 // Mirrors the RBAC store discipline: each mutation writes through the API then refetches the
@@ -57,6 +62,7 @@ export const useMenuStore = defineStore('menu', {
     variantsByProductId: {},
     recipeItemsByVariantId: {},
     variantsMissingRecipe: [],
+    orderable: [],
   }),
 
   getters: {
@@ -205,6 +211,16 @@ export const useMenuStore = defineStore('menu', {
     },
 
     // --- Sellable variants (write-through refetch per product) ---------------
+    /**
+     * Los mosaicos de la comanda, en UNA petición.
+     *
+     * Sustituye a `fetchProducts` + `loadPrices` + un `loadVariants` por producto, que era lo que
+     * hacía `buildVariantIndex` como efecto secundario: unas 81 peticiones antes de poder pedir.
+     */
+    async loadOrderable(branchId: string): Promise<void> {
+      this.orderable = await api.listOrderable(branchId)
+    },
+
     async loadVariants(productId: string): Promise<void> {
       this.variantsByProductId[productId] = await api.listVariants(productId)
     },

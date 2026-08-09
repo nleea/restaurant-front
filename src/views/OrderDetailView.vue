@@ -70,14 +70,15 @@ async function load() {
       leaveToFloor()
       return
     }
-    // Deep-link / hard refresh: the store may be empty (or the menu index not built).
-    // ensureLoaded fetches employee, tables, open orders, and the variant index (products,
-    // prices, variants) the menu field needs.
-    if (!order.value || Object.keys(orders.variantIndex).length === 0) {
+    // Deep-link / hard refresh: el store puede estar vacío. `ensureLoaded` trae empleado, mesas y
+    // las comandas abiertas CON sus líneas, en tres peticiones.
+    if (!order.value) {
       await orders.ensureLoaded(bid)
     }
-    // Categories drive the mono tags + rail; not part of ensureLoaded.
-    await menu.fetchCategories()
+    // Dos peticiones para el campo de menú: las categorías (los tags mono y el riel) y los mosaicos
+    // pedibles con su precio ya resuelto. Antes eran ~81 — una por producto para precios y otra por
+    // producto para variantes — y se disparaban de refilón desde `buildVariantIndex`.
+    await Promise.all([menu.fetchCategories(), menu.loadOrderable(bid)])
 
     const o = order.value
     if (!o || o.status !== 'open') {
@@ -85,6 +86,9 @@ async function load() {
       leaveToFloor()
       return
     }
+    // Ya no hace falta ningún índice del menú: la línea trae su nombre y el servidor pone el
+    // precio. El menú que esta pantalla sí carga (arriba) es el de los MOSAICOS para elegir plato,
+    // que es otra cosa y es inevitable.
     await Promise.all([orders.fetchItems(orderId.value), orders.fetchPayments(orderId.value)])
     ready.value = true
   } catch {

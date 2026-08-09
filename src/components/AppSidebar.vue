@@ -111,6 +111,12 @@ const navGroups: NavGroup[] = [
         icon: 'pi-bolt',
         permission: 'messaging.manage',
       },
+      {
+        to: '/whatsapp/statuses',
+        label: 'Estados WhatsApp',
+        icon: 'pi-megaphone',
+        permission: 'messaging.manage',
+      },
       { to: '/alerts', label: 'Alertas', icon: 'pi-bell', permission: 'alerts.read', badge: 'alerts' },
       { to: '/assistant', label: 'Asistente', icon: 'pi-sparkles', permission: 'assistant.use' },
       {

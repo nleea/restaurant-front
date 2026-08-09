@@ -4,6 +4,7 @@ import AppShell from '@/components/AppShell.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useBranchStore } from '@/stores/branch'
 import { useKitchenStore } from '@/stores/kitchen'
+import { useOrdersStore } from '@/stores/orders'
 import KdsPass from '@/components/kds/KdsPass.vue'
 import KitchenSetup from '@/components/kitchen/KitchenSetup.vue'
 import KitchenRouting from '@/components/kitchen/KitchenRouting.vue'
@@ -11,6 +12,7 @@ import KitchenRouting from '@/components/kitchen/KitchenRouting.vue'
 const auth = useAuthStore()
 const branch = useBranchStore()
 const kitchen = useKitchenStore()
+const orders = useOrdersStore()
 
 const canUpdate = computed(() => auth.can('kitchen.update'))
 
@@ -34,7 +36,10 @@ async function load() {
     await branch.ensureLoaded()
     if (branch.activeBranchId) {
       await kitchen.loadStations(branch.activeBranchId)
-      await kitchen.buildItemIndex(branch.activeBranchId)
+      // Las comandas con sus líneas en UNA petición; después indexar, que no pide nada.
+      await orders.loadOrdersWithItems(branch.activeBranchId)
+      await orders.loadTables(branch.activeBranchId)
+      kitchen.buildItemIndex()
       await kitchen.loadAllStationTickets()
       // Setup still works against a selected station; default it so its forms aren't empty.
       if (!kitchen.selectedStationId && kitchen.stations[0]) {
