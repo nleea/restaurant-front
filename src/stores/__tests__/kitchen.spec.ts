@@ -26,7 +26,7 @@ vi.mock('@/lib/sse', () => ({
 }))
 
 const ordersMock = vi.hoisted(() => ({
-  buildVariantIndex: vi.fn<(...a: unknown[]) => unknown>(),
+  loadOrdersWithItems: vi.fn<(...a: unknown[]) => unknown>(),
   loadOrders: vi.fn<(...a: unknown[]) => unknown>(),
   loadTables: vi.fn<(...a: unknown[]) => unknown>(),
   fetchItems: vi.fn<(...a: unknown[]) => unknown>(),
@@ -58,7 +58,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   for (const fn of Object.values(apiMock)) fn.mockReset()
   sseMock.createSseClient.mockReset()
-  ordersMock.buildVariantIndex.mockResolvedValue(undefined)
+  ordersMock.loadOrdersWithItems.mockResolvedValue(undefined)
   ordersMock.loadOrders.mockResolvedValue(undefined)
   ordersMock.loadTables.mockResolvedValue(undefined)
   ordersMock.fetchItems.mockResolvedValue(undefined)
@@ -148,11 +148,13 @@ describe('kitchen store', () => {
     }
     apiMock.listTickets.mockResolvedValue([ticket('t1', 'pending', 'i1')])
     await k.pollBoard('b1')
-    expect(ordersMock.loadOrders).not.toHaveBeenCalled()
+    expect(ordersMock.loadOrdersWithItems).not.toHaveBeenCalled()
 
+    // Un ticket sin etiqueta = una comanda que el store no tiene. Se relee en UNA petición (con
+    // líneas), no una por comanda como antes.
     apiMock.listTickets.mockResolvedValue([ticket('t2', 'pending', 'i-new')])
     await k.pollBoard('b1')
-    expect(ordersMock.loadOrders).toHaveBeenCalledWith('b1', 'open')
+    expect(ordersMock.loadOrdersWithItems).toHaveBeenCalledWith('b1')
   })
 
   it('attachProduct write-through reloads that product mappings (role defaults to null)', async () => {
@@ -242,10 +244,11 @@ describe('kitchen store', () => {
       ],
     }
     const k = useKitchenStore()
-    await k.buildItemIndex('b1')
-    expect(ordersMock.buildVariantIndex).toHaveBeenCalledWith('b1')
-    expect(ordersMock.loadOrders).toHaveBeenCalledWith('b1', 'open')
-    expect(ordersMock.loadTables).toHaveBeenCalledWith('b1')
+    // No pide nada: indexa lo que el store ya tiene. Cargar es del llamador, y eso es lo que hace
+    // visible el coste — antes esto disparaba ~55 peticiones desde dentro.
+    k.buildItemIndex()
+    expect(ordersMock.loadOrders).not.toHaveBeenCalled()
+    expect(ordersMock.loadTables).not.toHaveBeenCalled()
     expect(k.itemIndex['i1']).toEqual({
       label: 'Pizza · Grande',
       quantity: 3,
@@ -335,7 +338,7 @@ describe('kitchen store', () => {
         await vi.advanceTimersByTimeAsync(400)
         // full board load fans out per station, and the unknown item rebuilds the index
         expect(apiMock.listTickets).toHaveBeenCalledWith('s1')
-        expect(ordersMock.loadOrders).toHaveBeenCalledWith('b1', 'open')
+        expect(ordersMock.loadOrdersWithItems).toHaveBeenCalledWith('b1')
         k.stopEvents()
       } finally {
         vi.useRealTimers()

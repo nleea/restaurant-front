@@ -44,6 +44,8 @@ const ORDER = {
   // Efectivo: no necesita verificación. Estos tests son del ciclo de la comanda,
   // no del gate de pago prepagado (que tiene el suyo).
   payment_method: 'cash' as string | null,
+  // Sin `?include=items` la lista no las trae; estos tests no la piden.
+  items: null,
 }
 const ITEM = {
   id: 'i1',
@@ -55,6 +57,9 @@ const ITEM = {
   status: 'pending',
   notes: null,
   sent: false,
+  // Resueltos por el servidor: es lo que permite pintar la línea sin leer el menú.
+  product_name: 'Burger',
+  variant_name: 'Estándar',
 }
 
 beforeEach(() => {
@@ -103,21 +108,20 @@ describe('orders store', () => {
     expect(apiMock.listOrders).toHaveBeenCalled()
   })
 
-  it('addItem computes unit_price from the variant index and refetches', async () => {
+  it('addItem sends no price — the server resolves it — and refetches', async () => {
     apiMock.addItem.mockResolvedValue(ITEM)
     apiMock.getOrder.mockResolvedValue({ ...ORDER, subtotal: '30000.00', total: '30000.00' })
     apiMock.listItems.mockResolvedValue([ITEM])
     const orders = useOrdersStore()
     orders.orders = [ORDER]
-    orders.variantIndex = { v1: { productName: 'Burger', variantName: 'Estándar', unitPrice: 15000 } }
 
     await orders.addItem('o1', 'v1', 2)
 
-    // A tile tap carries no note — the kitchen note is written later, on the dupe.
+    // Sin precio, y eso es la mitad del change: el navegador ya no calcula dinero. Un tap tampoco
+    // lleva nota — la nota de cocina se escribe después, en la comanda.
     expect(apiMock.addItem).toHaveBeenCalledWith('o1', {
       product_variant_id: 'v1',
       quantity: 2,
-      unit_price: '15000.00',
     })
     // Server totals are shown verbatim after refetch.
     expect(orders.orders[0]?.total).toBe('30000.00')
@@ -149,14 +153,21 @@ describe('orders store', () => {
     expect(apiMock.setItemNotes).toHaveBeenCalledWith('i1', null)
   })
 
-  it('labels items from the variant index, never raw UUIDs', () => {
+  it('labels items from the line itself, never raw UUIDs', () => {
+    // Antes esto leía de un índice del menú que costaba una petición por producto. Ahora el nombre
+    // viene resuelto en la propia línea, así que la etiqueta no depende de haber leído la carta.
     const orders = useOrdersStore()
-    orders.variantIndex = {
-      v1: { productName: 'Burger', variantName: 'Estándar', unitPrice: 15000 },
-      v2: { productName: 'Pizza', variantName: 'Grande', unitPrice: 28000 },
-    }
     expect(orders.itemLabel(ITEM)).toBe('Burger')
-    expect(orders.itemLabel({ ...ITEM, product_variant_id: 'v2' })).toBe('Pizza · Grande')
+    expect(
+      orders.itemLabel({ ...ITEM, product_name: 'Pizza', variant_name: 'Grande' }),
+    ).toBe('Pizza · Grande')
+  })
+
+  it('labels a line with an unresolved name as a dash, not a UUID', () => {
+    const orders = useOrdersStore()
+    expect(
+      orders.itemLabel({ ...ITEM, product_name: null, variant_name: null }),
+    ).toBe('—')
   })
 
   it('setDiscount writes through then refetches the order', async () => {
@@ -309,6 +320,7 @@ describe('payment verification', () => {
     apiMock.getOrder.mockResolvedValue({
       ...ORDER,
       payment_method: 'transfer',
+      items: null,
       total: '46000.00',
     })
     apiMock.listItems.mockResolvedValue([])

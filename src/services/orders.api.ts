@@ -57,6 +57,13 @@ export interface Order {
    * `cash` exige verificar el comprobante antes de que el pedido llegue a cocina.
    */
   payment_method: string | null
+  /**
+   * Las líneas, **sólo** cuando se piden con `includeItems`. Nulo si no.
+   *
+   * Es UNA clave, no un mecanismo de expansión: un endpoint con un menú de `include` acaba teniendo
+   * una forma distinta de pedido por pantalla.
+   */
+  items: OrderItem[] | null
 }
 
 export interface OrderItem {
@@ -71,6 +78,16 @@ export interface OrderItem {
   notes: string | null
   /** True once the item has been routed to the kitchen (has a ticket) — pending until then. */
   sent: boolean
+  /**
+   * Cómo se llama esta línea, resuelto por el servidor.
+   *
+   * Con esto se pinta una comanda entera sin leer ni un endpoint de menú. Antes el navegador se
+   * bajaba los 40 productos de la carta sólo para traducir `product_variant_id` en un nombre.
+   *
+   * `variant_name` es nulo cuando la variante no tiene nombre propio (el caso "estándar").
+   */
+  product_name: string | null
+  variant_name: string | null
 }
 
 // Payment methods are owned by the client: the backend accepts any ≤30-char string for `method`,
@@ -246,12 +263,20 @@ export async function openOrder(input: {
   return (await http.post<Order>('/orders', input)).data
 }
 
+/**
+ * Las comandas de una sede, y opcionalmente sus líneas.
+ *
+ * `includeItems` es lo que convierte pintar un salón de doce mesas en UNA petición en vez de trece.
+ * No pedirlo no cuesta nada: el servidor no lee ni un ítem.
+ */
 export async function listOrders(params: {
   branchId: string
   status?: string
+  includeItems?: boolean
 }): Promise<Order[]> {
   const query: Record<string, string> = { branch_id: params.branchId }
   if (params.status) query.status_filter = params.status
+  if (params.includeItems) query.include = 'items'
   return (await http.get<Order[]>('/orders', { params: query })).data
 }
 
@@ -388,12 +413,19 @@ export async function listItems(orderId: string): Promise<OrderItem[]> {
   return (await http.get<OrderItem[]>(`/orders/${orderId}/items`)).data
 }
 
+/**
+ * Añade una línea. **No manda precio: lo pone el servidor.**
+ *
+ * Antes iba un `unit_price` que el navegador calculaba, y para calcularlo tenía que bajarse el menú
+ * entero. El servidor lo compone del precio de la sede más el recargo de la variante —la misma
+ * fórmula en un solo sitio— y rechaza la venta si el producto no tiene precio en esa sede, en vez
+ * de cobrar cero.
+ */
 export async function addItem(
   orderId: string,
   input: {
     product_variant_id: string
     quantity: number
-    unit_price: string
     notes?: string | null
   },
 ): Promise<OrderItem> {

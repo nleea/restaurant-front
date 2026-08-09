@@ -194,7 +194,11 @@ export const useKitchenStore = defineStore('kitchen', {
       try {
         await this.loadAllStationTickets()
         if (this.allTickets.some((t) => !this.itemIndex[t.order_item_id])) {
-          await this.buildItemIndex(branchId)
+          // Un ticket sin etiqueta = una comanda que el store no tiene. Se relee (una petición,
+          // con líneas) y se reindexa.
+          const orders = useOrdersStore()
+          await orders.loadOrdersWithItems(branchId)
+          this.buildItemIndex()
         }
       } catch {
         // keep showing the last good board; the next tick retries
@@ -367,15 +371,19 @@ export const useKitchenStore = defineStore('kitchen', {
       }
     },
 
-    // Build order_item_id → {label, quantity, order context} from the menu + the branch's open
-    // orders, reusing the orders store's variant index and item labeller. Best-effort: items of
-    // orders no longer open won't resolve and their tickets fall back to a short ref.
-    async buildItemIndex(branchId: string): Promise<void> {
+    /**
+     * Construye `order_item_id → {label, cantidad, contexto}` sobre lo que YA tiene el store.
+     *
+     * No pide nada: quien llama carga. Antes hacía tres cosas a la vez —construir un índice del
+     * menú (una petición por producto), releer comandas y mesas que el llamador acababa de leer, y
+     * pedir los ítems de cada comanda— y eran unas 55 peticiones por entrada al Salón.
+     *
+     * Que cargar sea del llamador y no de aquí es lo que hace visible el coste: `ensureLoaded` trae
+     * comandas con líneas en una petición, y esto sólo indexa. Best-effort: los ítems de comandas
+     * que ya no están abiertas no resuelven y su ticket cae a una referencia corta.
+     */
+    buildItemIndex(): void {
       const orders = useOrdersStore()
-      await orders.buildVariantIndex(branchId)
-      await orders.loadOrders(branchId, 'open')
-      await orders.loadTables(branchId)
-      await Promise.all(orders.orders.map((o) => orders.fetchItems(o.id)))
       const tableNumber = (id: string | null): string | null =>
         id ? (orders.tables.find((t) => t.id === id)?.number ?? null) : null
       const index: Record<string, ItemInfo> = {}

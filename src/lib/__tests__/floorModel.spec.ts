@@ -20,6 +20,7 @@ const order = (
   kitchenState: KitchenState = 'none',
 ): Order => ({
   payment_method: 'cash',
+  items: null,
   id,
   branch_id: 'b1',
   channel: tableId ? 'dine_in' : 'takeaway',

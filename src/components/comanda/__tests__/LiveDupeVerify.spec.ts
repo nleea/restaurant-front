@@ -35,6 +35,7 @@ const ORDER = {
   closed_at: null,
   kitchen_state: 'none' as const,
   payment_method: 'transfer' as string | null,
+  items: null,
 }
 
 function seed(over: Partial<typeof ORDER> = {}, paid = 0) {
@@ -48,6 +49,8 @@ function seed(over: Partial<typeof ORDER> = {}, paid = 0) {
         product_variant_id: 'v1',
         quantity: 1,
         unit_price: '25000.00',
+        product_name: 'Burger',
+        variant_name: 'Estándar',
         line_subtotal: '25000.00',
         status: 'pending',
         notes: null,
