@@ -18,7 +18,13 @@ const props = defineProps<{
   currentEmployeeId?: string | null
 }>()
 
-const emit = defineEmits<{ back: []; claim: []; close: [] }>()
+const emit = defineEmits<{
+  back: []
+  claim: []
+  close: []
+  /** "Este contacto no quiere estados". Ver el interruptor en la plantilla. */
+  toggleStatusOptOut: [optedOut: boolean]
+}>()
 
 const isClosed = computed(() => props.thread.status === 'closed')
 const isClaimed = computed(() => props.thread.employee_id !== null)
@@ -70,7 +76,32 @@ const CONNECTION = {
         >
           · atiende {{ thread.holder_name }}
         </span>
+        <!-- La marca, a la vista y no escondida en un menú: si no se ve, nadie sabe que ya se
+             cumplió la petición y el siguiente que lea el hilo la vuelve a prometer. -->
+        <span
+          v-if="thread.contact_status_opt_out"
+          class="font-mono text-[10px] uppercase tracking-wide text-steel-400"
+          data-testid="opt-out-mark"
+        >
+          · no recibe estados
+        </span>
       </p>
+
+      <!-- El interruptor vive AQUÍ, en el hilo, y necesita `messaging.attend` — no `manage`.
+           La petición ("no me manden más") llega en el chat, y quien la lee es quien atiende:
+           obligarle a cambiar de pantalla y de permiso para cumplir algo que acaba de leer es
+           exactamente cómo se consigue que no se cumpla.
+
+           Marcar no toca el estado de la conversación, no la saca de la bandeja y no impide
+           responderle. Es lo que lo separa de borrar el contacto, que se llevaba su historial. -->
+      <button
+        v-if="canAttend"
+        class="mt-1 self-start font-mono text-[10px] uppercase tracking-[0.14em] text-steel-500 underline"
+        data-testid="toggle-opt-out"
+        @click="emit('toggleStatusOptOut', !thread.contact_status_opt_out)"
+      >
+        {{ thread.contact_status_opt_out ? 'Volver a enviarle estados' : 'No enviarle estados' }}
+      </button>
     </div>
 
     <div class="flex shrink-0 flex-col items-end gap-2">

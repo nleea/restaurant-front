@@ -36,6 +36,7 @@ const emit = defineEmits<{
   close: []
   reply: [body: string]
   sendFile: [file: File, caption: string]
+  toggleStatusOptOut: [optedOut: boolean]
 }>()
 
 const isClosed = computed(() => props.thread.status === 'closed')
@@ -90,6 +91,7 @@ function explainsNoOrders(message: Message): boolean {
       @back="emit('back')"
       @claim="emit('claim')"
       @close="emit('close')"
+      @toggle-status-opt-out="(v) => emit('toggleStatusOptOut', v)"
     />
 
     <p

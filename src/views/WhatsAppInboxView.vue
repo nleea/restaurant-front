@@ -13,6 +13,7 @@ import { useOrdersStore } from '@/stores/orders'
 import type { ConnectionStatus } from '@/components/messaging/ConversationHeader.vue'
 import {
   getEligibleOrders,
+  setStatusOptOut,
   useMessageAsProof,
   type Conversation,
   type EligibleOrder,
@@ -71,6 +72,18 @@ async function useAsProof(messageId: string, orderId: string, amount: string): P
   await useMessageAsProof(thread.id, messageId, branch.activeBranchId, orderId, amount)
   // El pedido deja de deber, así que deja de ser elegible: se relee en vez de adivinar.
   eligibleOrders.value = await getEligibleOrders(thread.id, branch.activeBranchId)
+}
+
+/**
+ * "Este contacto no quiere estados", desde el hilo donde lo pidió.
+ *
+ * El backend devuelve el hilo entero para no adivinar el resultado: si esto se limitara a poner la
+ * marca en local, un fallo del servidor dejaría la pantalla diciendo que se cumplió algo que no.
+ */
+async function toggleStatusOptOut(optedOut: boolean): Promise<void> {
+  const thread = messaging.thread
+  if (!thread || !branch.activeBranchId) return
+  messaging.thread = await setStatusOptOut(branch.activeBranchId, thread.id, optedOut)
 }
 
 async function load() {
@@ -192,6 +205,7 @@ function select(conversation: Conversation) {
               @reply="(body) => messaging.reply(messaging.thread!.id, body)"
               @use-as-proof="useAsProof"
               @send-file="(file, caption) => messaging.sendMedia(messaging.thread!.id, file, caption)"
+              @toggle-status-opt-out="toggleStatusOptOut"
             />
           </section>
         </div>
