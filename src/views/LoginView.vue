@@ -29,6 +29,7 @@ async function onSubmit() {
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/'
     await router.replace(redirect)
   } catch (e) {
+    console.error(e.message)
     error.value =
       e instanceof AxiosError && e.response?.status === 401
         ? 'Credenciales inválidas. Revisa el correo y la contraseña.'

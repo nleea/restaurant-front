@@ -73,6 +73,9 @@ async function runRefresh(): Promise<string> {
 function forceLogout(): void {
   clearTokens()
   const here = window.location.pathname + window.location.search
+  if(window.location.pathname === '/login') {
+    return
+  }
   const redirect = encodeURIComponent(here)
   window.location.assign(`/login?redirect=${redirect}`)
 }
