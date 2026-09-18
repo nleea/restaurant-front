@@ -68,3 +68,33 @@ jobs:
             VITE_API_PORT=${{ vars.VITE_API_PORT }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # GitOps: fija la version recien publicada en el manifiesto del repo de
+      # despliegue (nleea/restaurante-ops). ArgoCD observa `k8s/` ahi y sincroniza
+      # el cambio al cluster. Sin este paso el manifiesto seguiria apuntando a
+      # `latest`, ArgoCD no veria ninguna revision nueva y el despliegue no saldria.
+      #
+      # Requiere el secret GITOPS_TOKEN: un PAT con permiso de escritura sobre
+      # nleea/restaurante-ops (el GITHUB_TOKEN por defecto solo alcanza este repo).
+      - name: Actualizar la version en el repo GitOps
+        env:
+          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          IMAGE="${DOCKER_USER}/${IMAGE_NAME}"
+          git clone \
+            "https://x-access-token:${GITOPS_TOKEN}@github.com/nleea/restaurante-ops.git" \
+            "$RUNNER_TEMP/gitops"
+          cd "$RUNNER_TEMP/gitops"
+          sed -i -E "s#${IMAGE}:[A-Za-z0-9._-]+#${IMAGE}:${VERSION}#g" \
+            k8s/frontend.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Los manifiestos ya apuntan a ${VERSION}; nada que actualizar."
+            exit 0
+          fi
+          git commit -am "chore(deploy): frontend ${VERSION}"
+          git pull --rebase origin main
+          git push origin main
