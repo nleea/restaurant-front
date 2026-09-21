@@ -16,7 +16,7 @@ const PLACEHOLDERS = [
   'menu_link',
 ]
 const DEFAULT_TEXT =
-  '¡Con gusto! Dime qué necesitas:\n• *pedido* — hacer un pedido nuevo\n• *estado* — ver cómo va mi pedido\n• *persona* — hablar con alguien del equipo'
+  '¡Con gusto! Dime qué necesitas:\n*1* — Hacer un pedido nuevo\n*2* — Ver cómo va mi pedido\n*3* — Hablar con alguien del equipo'
 const IDENTITY = {
   businessName: 'Sabor Costeño',
   branchName: 'Sede Centro',
@@ -43,9 +43,9 @@ describe('MenuSection', () => {
   it('con el texto vacío enseña el de fábrica, que es lo que sale de verdad', () => {
     const wrapper = mountSection()
     const preview = wrapper.get('[data-testid="menu-preview"]').text()
-    expect(preview).toContain('pedido')
-    expect(preview).toContain('estado')
-    expect(preview).toContain('persona')
+    expect(preview).toContain('*1*')
+    expect(preview).toContain('*2*')
+    expect(preview).toContain('*3*')
     expect(wrapper.find('[data-testid="menu-default-note"]').exists()).toBe(true)
   })
 
@@ -60,12 +60,12 @@ describe('MenuSection', () => {
   it('explica qué opciones reconoce el sistema', () => {
     const wrapper = mountSection()
     const notice = wrapper.get('[data-testid="menu-options-notice"]').text()
+    expect(notice).toContain('responde con un número')
     expect(notice).toContain('pedido')
     expect(notice).toContain('estado')
     expect(notice).toContain('persona')
-    expect(notice).toContain('1, 2 y 3')
+    expect(notice).toContain('número suelto')
   })
-
   it('nombra el marcador que no existe mientras se escribe', () => {
     const wrapper = mountSection({ text: 'Hola {cliente}' })
     expect(wrapper.get('[data-testid="menu-unknown"]').text()).toContain('{cliente}')
