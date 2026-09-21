@@ -19,6 +19,7 @@ import AppShell from '@/components/AppShell.vue'
 import GreetingSection from '@/components/messaging/autoreply/GreetingSection.vue'
 import StatusMappingSection from '@/components/messaging/autoreply/StatusMappingSection.vue'
 import FaqSection from '@/components/messaging/autoreply/FaqSection.vue'
+import MenuSection from '@/components/messaging/autoreply/MenuSection.vue'
 import QuickReplySection from '@/components/messaging/autoreply/QuickReplySection.vue'
 import ConversationSection from '@/components/messaging/autoreply/ConversationSection.vue'
 import { detailOf } from '@/lib/apiError'
@@ -59,8 +60,10 @@ const placeholders = ref<{
   order: string[]
   faq: string[]
   awaiting: string[]
-}>({ greeting: [], order: [], faq: [], awaiting: [] })
+  menu: string[]
+}>({ greeting: [], order: [], faq: [], awaiting: [], menu: [] })
 const assistantAvailable = ref(false)
+const defaultMenuText = ref('')
 const defaultMapping = ref<Record<string, StatusMessage>>({})
 const suggestedFaqs = ref<FaqEntry[]>([])
 const suggestedQuickReplies = ref<QuickReply[]>([])
@@ -85,6 +88,9 @@ const invalidPlaceholders = computed(() =>
         orderPlaceholders: placeholders.value.order,
         faqs: draft.value.faqs,
         faqPlaceholders: placeholders.value.faq,
+        menuEnabled: draft.value.menu_enabled,
+        menuText: draft.value.menu_text,
+        menuPlaceholders: placeholders.value.menu,
       })
     : [],
 )
@@ -122,8 +128,10 @@ async function load(): Promise<void> {
       order: data.order_placeholders,
       faq: data.faq_placeholders,
       awaiting: data.awaiting_payment_placeholders,
+      menu: data.menu_placeholders,
     }
     assistantAvailable.value = data.assistant_available
+    defaultMenuText.value = data.default_menu_text
     defaultMapping.value = data.default_status_mapping
     suggestedFaqs.value = data.suggested_faqs
     suggestedQuickReplies.value = data.suggested_quick_replies
@@ -323,8 +331,21 @@ onMounted(async () => {
             @restore="restoreFaqs"
           />
 
-          <!-- Justo después de las FAQs: es donde el dueño llega buscando "que conteste algo",
-               y donde tiene que leer que estas dos cosas no son la misma. -->
+          <!-- El último automatismo de la cadena: si el saludo, el asistente y las FAQs no
+               contestaron, sale esto. Va después de las FAQs por el mismo motivo que el dueño
+               llega aquí: a que nada se quede sin respuesta. -->
+          <MenuSection
+            v-model:enabled="draft.menu_enabled"
+            v-model:text="draft.menu_text"
+            :placeholders="placeholders.menu"
+            :default-text="defaultMenuText"
+            :identity="identity"
+            :preview-link="previewLink"
+            :disabled="saving"
+          />
+
+          <!-- Justo después de las respuestas automáticas: es donde el dueño llega buscando "que
+               conteste algo", y donde tiene que leer que estas dos cosas no son la misma. -->
           <QuickReplySection
             v-model:entries="draftQuickReplies"
             :suggested="suggestedQuickReplies"

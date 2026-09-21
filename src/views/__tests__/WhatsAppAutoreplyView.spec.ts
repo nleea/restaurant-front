@@ -38,6 +38,8 @@ const DEFAULTS: AutoreplyDefaults = {
     greeting_closed_text: 'Cerrados; abrimos {next_opening}',
     greeting_awaiting_payment_text: '',
     assistant_offer_enabled: false,
+    menu_enabled: false,
+    menu_text: '',
     faqs: null,
     quick_replies: null,
     idle_hours: 24,
@@ -88,6 +90,8 @@ const DEFAULTS: AutoreplyDefaults = {
     'order_number',
     'order_total',
   ],
+  menu_placeholders: ['business_name', 'branch_name', 'branch_address', 'branch_phone', 'menu_link'],
+  default_menu_text: '¡Con gusto! Dime qué necesitas:\n• *pedido*\n• *estado*\n• *persona*',
   faq_placeholders: [
     'business_name',
     'branch_name',
@@ -296,6 +300,40 @@ describe('WhatsAppAutoreplyView', () => {
 
     expect(wrapper.get('[data-testid="invalid-hint"]').text()).toContain('{cliente}')
     expect(wrapper.get('[data-testid="save"]').attributes('disabled')).toBeDefined()
+  })
+
+  // --- Menú de opciones ------------------------------------------------------
+  it('encender el menú deja cambios sin guardar y lo manda', async () => {
+    const wrapper = await mountView()
+    await wrapper.get('[data-testid="menu-toggle"]').trigger('click')
+    expect(wrapper.text()).toContain('Hay cambios sin guardar')
+
+    await wrapper.get('[data-testid="save"]').trigger('click')
+    await flushPromises()
+    const sent = apiMock.saveAutoreplySettings.mock.calls[0]?.[0] as {
+      menu_enabled: boolean
+      menu_text: string
+    }
+    expect(sent.menu_enabled).toBe(true)
+    expect(sent.menu_text).toBe('')
+  })
+
+  it('un marcador inexistente en el menú encendido apaga el guardado', async () => {
+    const wrapper = await mountView()
+    await wrapper.get('[data-testid="menu-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="menu-text"]').setValue('Hola {cliente}')
+
+    expect(wrapper.get('[data-testid="invalid-hint"]').text()).toContain('{cliente}')
+    expect(wrapper.get('[data-testid="save"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('un marcador inexistente en el menú APAGADO no bloquea el guardado', async () => {
+    // Un texto que nadie va a mandar no puede ser una trampa, igual que con las FAQs apagadas.
+    const wrapper = await mountView()
+    await wrapper.get('[data-testid="menu-text"]').setValue('Hola {cliente}')
+
+    expect(wrapper.get('[data-testid="menu-toggle"]').attributes('aria-checked')).toBe('false')
+    expect(wrapper.find('[data-testid="invalid-hint"]').exists()).toBe(false)
   })
 })
 
