@@ -147,10 +147,11 @@ function insert(placeholder: string): void {
           class="rounded-lg border border-line bg-app px-3 py-2 font-mono text-[10px] leading-relaxed text-steel-500"
           data-testid="menu-options-notice"
         >
-          El sistema reconoce las opciones por palabra: <strong>pedido</strong> manda el enlace a
-          la carta, <strong>estado</strong> cuenta cómo va su último pedido y
-          <strong>persona</strong> avisa al equipo. También acepta 1, 2 y 3, pero sólo cuando el
-          mensaje es el número suelto.
+          El cliente responde con un número. <strong>1</strong> manda el enlace a la carta,
+          <strong>2</strong> cuenta cómo va su último pedido y <strong>3</strong> avisa al equipo.
+          También se entienden las palabras <strong>pedido</strong>, <strong>estado</strong> y
+          <strong>persona</strong>. Los números sólo cuentan cuando el mensaje es el número suelto:
+          "quiero 2 hamburguesas" no es una consulta de estado.
         </p>
         <p class="font-mono text-[10px] leading-relaxed text-steel-400">
           Sale una vez por conversación, sólo en un chat abierto y con el negocio abierto. Si el

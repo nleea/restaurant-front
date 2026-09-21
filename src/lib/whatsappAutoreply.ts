@@ -64,11 +64,15 @@ export const DEFAULT_GREETING_CLOSED =
 export const ASSISTANT_OFFER = '\n\nEscribe *1* si prefieres que te atienda nuestro asistente.'
 // El menú de opciones de fábrica. Espejo de `DEFAULT_OPTIONS_MENU` del backend: un campo vacío
 // enseña éste, porque es lo que saldrá de verdad por WhatsApp.
+//
+// Numerado y no una lista con viñetas: los botones interactivos de WhatsApp no existen en un
+// puente no oficial, y responder con un número es lo que hace todo el mundo. El backend acepta
+// los números sueltos y también las palabras ("pedido", "estado", "persona").
 export const DEFAULT_OPTIONS_MENU =
   '¡Con gusto! Dime qué necesitas:\n\n' +
-  '• *pedido* — hacer un pedido nuevo\n' +
-  '• *estado* — ver cómo va mi pedido\n' +
-  '• *persona* — hablar con alguien del equipo'
+  '*1* — Hacer un pedido nuevo\n' +
+  '*2* — Ver cómo va mi pedido\n' +
+  '*3* — Hablar con alguien del equipo'
 
 // --- Horarios (espejo de `hours.py`) -----------------------------------------
 export interface HoursWindow {
