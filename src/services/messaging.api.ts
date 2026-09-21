@@ -275,6 +275,16 @@ export interface AutoreplySettings {
   /** Tercera variante: el contacto tiene un pedido prepago sin pagar. Vacía = usar las otras. */
   greeting_awaiting_payment_text: string
   assistant_offer_enabled: boolean
+  /**
+   * El menú de opciones que sale cuando el saludo, el asistente y las FAQs no contestan.
+   *
+   * Existe para que un mensaje no entendido en un chat abierto no se quede sin respuesta: al
+   * cliente el silencio le parece un desplante. Sale una vez por conversación, sólo en chat
+   * abierto y con el negocio abierto.
+   */
+  menu_enabled: boolean
+  /** Texto del menú. Vacío = usa el de fábrica que envía el backend. */
+  menu_text: string
   /** Tras cuántas horas de silencio se cierra la conversación — y se vuelve a saludar. */
   idle_hours: number
   /** Cuánto vive el token del enlace a la carta. */
@@ -304,6 +314,9 @@ export interface AutoreplyDefaults {
   order_placeholders: string[]
   faq_placeholders: string[]
   awaiting_payment_placeholders: string[]
+  menu_placeholders: string[]
+  /** El texto de fábrica del menú, para el campo vacío y la vista previa. */
+  default_menu_text: string
   /** Si el asistente conversacional existe. Falso hasta `assistant-core` (fase 4). */
   assistant_available: boolean
 }

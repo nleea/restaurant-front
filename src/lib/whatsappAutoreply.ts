@@ -62,6 +62,13 @@ export const DEFAULT_GREETING_OPEN =
 export const DEFAULT_GREETING_CLOSED =
   '¡Hola! Bienvenido a {business_name}. 👋\n\nAhora mismo estamos cerrados — abrimos {next_opening}.\n\nPuedes ir mirando la carta aquí:\n{menu_link}'
 export const ASSISTANT_OFFER = '\n\nEscribe *1* si prefieres que te atienda nuestro asistente.'
+// El menú de opciones de fábrica. Espejo de `DEFAULT_OPTIONS_MENU` del backend: un campo vacío
+// enseña éste, porque es lo que saldrá de verdad por WhatsApp.
+export const DEFAULT_OPTIONS_MENU =
+  '¡Con gusto! Dime qué necesitas:\n\n' +
+  '• *pedido* — hacer un pedido nuevo\n' +
+  '• *estado* — ver cómo va mi pedido\n' +
+  '• *persona* — hablar con alguien del equipo'
 
 // --- Horarios (espejo de `hours.py`) -----------------------------------------
 export interface HoursWindow {
@@ -194,6 +201,13 @@ export interface PlaceholderCheckInput {
   awaitingPlaceholders?: readonly string[]
   faqs?: readonly FaqEntry[] | null
   faqPlaceholders?: readonly string[]
+  /**
+   * El menú de opciones y sus marcadores. Sólo se valida si está ENCENDIDO, por la misma razón
+   * que un aviso apagado: un texto que nadie va a mandar no puede bloquear el formulario.
+   */
+  menuEnabled?: boolean
+  menuText?: string
+  menuPlaceholders?: readonly string[]
 }
 
 /**
@@ -230,6 +244,13 @@ export function placeholderErrors(input: PlaceholderCheckInput): string[] {
   for (const faq of input.faqs ?? []) {
     if (!faq.enabled) continue
     for (const name of unknownPlaceholders(faq.text, input.faqPlaceholders ?? [])) {
+      offenders.add(name)
+    }
+  }
+  // El menú, sólo si está encendido. Un texto apagado no sale, y bloquear el guardado por un
+  // borrador que nadie va a mandar es la trampa que ya se evita con las FAQs.
+  if (input.menuEnabled) {
+    for (const name of unknownPlaceholders(input.menuText ?? '', input.menuPlaceholders ?? [])) {
       offenders.add(name)
     }
   }
@@ -364,4 +385,22 @@ export function previewGreeting(input: GreetingPreviewInput): string {
     next_opening: input.nextOpeningLabel,
   })
   return input.assistantOffer ? text + ASSISTANT_OFFER : text
+}
+
+export interface MenuPreviewInput extends BusinessIdentity {
+  template: string
+  menuLink: string
+}
+
+/**
+ * El menú de opciones tal y como saldría. Igual que el backend: identidad + `{menu_link}`.
+ *
+ * El texto de fábrica no usa `{menu_link}` —la opción "pedido" manda el enlace por separado—,
+ * pero un tenant que lo escriba sí puede, así que se resuelve igual.
+ */
+export function previewMenu(input: MenuPreviewInput): string {
+  return renderTemplate(input.template, {
+    ...identityValues(input),
+    menu_link: input.menuLink,
+  })
 }
