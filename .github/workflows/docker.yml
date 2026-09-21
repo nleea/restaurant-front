@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: restaurant-front-main-deploy
+  cancel-in-progress: false
+
 env:
   DOCKER_USER: ${{ secrets.DOCKERHUB_USERNAME }}
   IMAGE_NAME: restaurante-frontend
@@ -87,14 +91,32 @@ jobs:
             "https://x-access-token:${GITOPS_TOKEN}@github.com/nleea/restaurante-ops.git" \
             "$RUNNER_TEMP/gitops"
           cd "$RUNNER_TEMP/gitops"
-          sed -i -E "s#${IMAGE}:[A-Za-z0-9._-]+#${IMAGE}:${VERSION}#g" \
-            k8s/frontend.yaml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet; then
-            echo "Los manifiestos ya apuntan a ${VERSION}; nada que actualizar."
-            exit 0
-          fi
-          git commit -am "chore(deploy): frontend ${VERSION}"
-          git pull --rebase origin main
-          git push origin main
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+
+            sed -i -E "s#${IMAGE}:[A-Za-z0-9._-]+#${IMAGE}:${VERSION}#g" \
+              k8s/frontend.yaml
+
+            if git diff --quiet -- k8s/frontend.yaml; then
+              echo "Los manifiestos ya apuntan a ${VERSION}; nada que actualizar."
+              exit 0
+            fi
+
+            git add k8s/frontend.yaml
+            git commit -m "chore(deploy): frontend ${VERSION}"
+
+            if git push origin HEAD:main; then
+              echo "Manifiesto GitOps actualizado correctamente."
+              exit 0
+            fi
+
+            echo "Push rechazado; reintentando (${attempt}/5)..."
+            sleep $((attempt * 2))
+          done
+
+          echo "No se pudo actualizar restaurante-ops después de 5 intentos."
+          exit 1
