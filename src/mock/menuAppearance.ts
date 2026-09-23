@@ -18,6 +18,7 @@ export const mockPublishedConfig: MenuAppearanceConfig = {
   brand: {
     logoUrl: '',
     bannerUrl: '',
+    paymentQrUrl: '',
     restaurantName: 'La Cevichería del Cabo',
   },
   // Default layout on a 4-column grid: banner spans the top (large 2×2), featured + search share
