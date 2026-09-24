@@ -26,18 +26,15 @@ const props = defineProps<{
  * Las familias con las que se ensaya cada fuente del proveedor.
  *
  * No son las fuentes de WhatsApp —no las tenemos— y eso hay que decirlo: la previa promete la
- * FORMA (serif, estrecha, manuscrita), no el tipo exacto. Prometer el tipo exacto sería la clase de
+ * FORMA (normal, manuscrita), no el tipo exacto. Prometer el tipo exacto sería la clase de
  * fidelidad que no se puede cumplir, y el dueño lo notaría en el teléfono.
  */
 const FONT_STACKS: Record<number, string> = {
-  0: 'var(--font-sans, system-ui), sans-serif',
-  1: 'Georgia, "Times New Roman", serif',
-  2: 'var(--font-display, system-ui), sans-serif',
-  3: '"Arial Narrow", "Helvetica Neue", sans-serif',
-  4: '"Segoe Script", "Bradley Hand", cursive',
+  1: 'var(--font-sans, system-ui), sans-serif',
+  2: '"Segoe Script", "Bradley Hand", cursive',
 }
 
-const fontStack = computed(() => FONT_STACKS[props.font ?? 0] ?? FONT_STACKS[0])
+const fontStack = computed(() => FONT_STACKS[props.font ?? 1] ?? FONT_STACKS[1])
 const fontName = computed(
   () => FONTS.find((f) => f.value === props.font)?.label ?? '—',
 )

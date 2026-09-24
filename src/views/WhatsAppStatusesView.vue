@@ -84,7 +84,7 @@ function emptyDraft(): StatusDraft {
     content: '',
     slots: [],
     bg_color: BACKGROUNDS[0],
-    font: 0,
+    font: FONTS[0].value,
     caption: null,
     media_url: null,
     active: true,

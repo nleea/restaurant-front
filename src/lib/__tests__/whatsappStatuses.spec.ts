@@ -11,6 +11,7 @@ import {
   describeSchedule,
   draftErrors,
   emptyAudienceReason,
+  FONTS,
   isEveryDay,
   isTruncated,
   MAX_SLOTS,
@@ -135,6 +136,26 @@ describe('validación de la tarjeta', () => {
   it('un texto sin fuente no se puede guardar', () => {
     const errors = draftErrors(draft({ font: null }))
     expect(errors.some((e) => e.includes('fuente'))).toBe(true)
+  })
+
+  it('la fuente 0 cuenta como "sin fuente": Evolution la rechaza', () => {
+    const errors = draftErrors(draft({ font: 0 }))
+    expect(errors.some((e) => e.includes('fuente'))).toBe(true)
+  })
+
+  it('sólo las dos fuentes que el proveedor publica: Normal (1) y Manuscrita (2)', () => {
+    expect(FONTS.map((f) => f.value)).toEqual([1, 2])
+    expect(FONTS.map((f) => f.label)).toEqual(['Normal', 'Manuscrita'])
+    for (const { value } of FONTS) {
+      expect(draftErrors(draft({ font: value }))).toEqual([])
+    }
+  })
+
+  it('una fuente fuera del catálogo no se puede guardar', () => {
+    for (const font of [3, 4, 5, 6]) {
+      const errors = draftErrors(draft({ font }))
+      expect(errors.some((e) => e.includes('fuente'))).toBe(true)
+    }
   })
 
   it('una imagen no necesita ninguno de los dos', () => {

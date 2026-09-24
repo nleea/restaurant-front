@@ -53,13 +53,16 @@ export const BACKGROUNDS = [
   '#4C1D24',
 ] as const
 
-/** Las fuentes que el proveedor numera. El nombre es nuestro; el número es el suyo. */
+/**
+ * Las fuentes que el proveedor numera. El nombre es nuestro; el número es el suyo.
+ *
+ * Son sólo dos porque es lo que cabe entre dos listas ajenas: Evolution acepta de 0 a 5 pero cae
+ * con el 0 (`if (!status.font)`), y el enum de WhatsApp (`FontType`) salta de 2 a 6. Queda
+ * `SYSTEM_TEXT=1` y `FB_SCRIPT=2`. Debe coincidir con `STATUS_FONTS` del backend.
+ */
 export const FONTS = [
-  { value: 0, label: 'Normal' },
-  { value: 1, label: 'Serif' },
-  { value: 2, label: 'Redondeada' },
-  { value: 3, label: 'Estrecha' },
-  { value: 4, label: 'Manuscrita' },
+  { value: 1, label: 'Normal' },
+  { value: 2, label: 'Manuscrita' },
 ] as const
 
 // --- Horas -------------------------------------------------------------------
@@ -175,7 +178,7 @@ export function draftErrors(draft: StatusDraft): string[] {
     // Los dos que WhatsApp EXIGE. Sin ellos el proveedor devuelve 400, y el estado lo publica un
     // worker a una hora programada sin nadie mirando: el dueño se enteraría por un teléfono vacío.
     if (!draft.bg_color) errors.push('Elige un color de fondo: WhatsApp lo exige.')
-    if (draft.font === null) errors.push('Elige una fuente: WhatsApp la exige.')
+    if (!FONTS.some((f) => f.value === draft.font)) errors.push('Elige una fuente: WhatsApp la exige.')
   }
 
   errors.push(...slotErrors(draft.slots))
